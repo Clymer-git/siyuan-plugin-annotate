@@ -1,0 +1,4327 @@
+/* ==========================================================================
+   图片标注（siyuan-plugin-annotate）
+   样式令牌全部映射到思源主题变量（app/appearance/themes/{daylight,midnight}/theme.css）。
+   --annot-* 是编辑器内部使用的语义令牌，绝不写死颜色，保证浅色/深色都跟随思源。
+   ========================================================================== */
+
+/* 让思源原生 Dialog 的 body 变成可用的全高容器 */
+.annot-dialog.b3-dialog__container {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.annot-dialog .b3-dialog__header {
+  flex: 0 0 auto;
+}
+
+.annot-dialog .b3-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.annot-root {
+  /* ---- 语义令牌 → 思源主题变量 ---- */
+  --annot-bg: var(--b3-theme-surface, #f6f6f6);
+  --annot-panel: var(--b3-theme-background, #ffffff);
+  --annot-text: var(--b3-theme-on-background, #222222);
+  --annot-text-weak: var(--b3-theme-on-surface, #5f6368);
+  --annot-border: var(--b3-border-color, #e0e0e0);
+  --annot-border-soft: var(--b3-theme-surface-lighter, #e0e0e0);
+  --annot-accent: var(--b3-theme-primary, #3575f0);
+  --annot-accent-soft: var(--b3-theme-primary-lightest, rgba(53, 117, 240, .12));
+  --annot-accent-text: var(--b3-theme-on-primary, #ffffff);
+  --annot-hover: var(--b3-toolbar-hover, rgba(127, 127, 127, .12));
+  --annot-stage: var(--b3-theme-background-light, #dfe0e1);
+  --annot-shadow: var(--b3-dialog-shadow, 0 8px 24px rgba(0, 0, 0, .2));
+  --annot-radius: var(--b3-border-radius, 6px);
+  --annot-radius-b: var(--b3-border-radius-b, 12px);
+
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--annot-bg);
+  color: var(--annot-text);
+  font-family: var(--b3-font-family, "Segoe UI", "Microsoft YaHei", sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.annot-root *,
+.annot-root *::before,
+.annot-root *::after {
+  box-sizing: border-box;
+}
+
+/* 里程碑五会接入「强制浅色 / 强制深色」，这里先备好覆盖规则 */
+.annot-root[data-annot-theme="light"] {
+  --annot-bg: #f6f6f6;
+  --annot-panel: #ffffff;
+  --annot-text: #222222;
+  --annot-text-weak: #5f6368;
+  --annot-border: #e0e0e0;
+  --annot-border-soft: #e0e0e0;
+  --annot-accent: #3575f0;
+  --annot-accent-soft: rgba(53, 117, 240, .12);
+  --annot-accent-text: #ffffff;
+  --annot-hover: rgba(0, 0, 0, .06);
+  --annot-stage: #dfe0e1;
+  --annot-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+}
+
+.annot-root[data-annot-theme="dark"] {
+  --annot-bg: #2c2c2c;
+  --annot-panel: #1e1e1e;
+  --annot-text: #dadada;
+  --annot-text-weak: #9aa0a6;
+  --annot-border: #484848;
+  --annot-border-soft: rgba(230, 230, 230, .1);
+  --annot-accent: #3575f0;
+  --annot-accent-soft: rgba(53, 117, 240, .24);
+  --annot-accent-text: #ffffff;
+  --annot-hover: rgba(255, 255, 255, .08);
+  --annot-stage: rgba(255, 255, 255, .08);
+  --annot-shadow: 0 8px 24px rgba(0, 0, 0, .8);
+}
+
+/* ---------------------------------------------------------------- 顶部工具栏 */
+.annot-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 12px;
+  background: var(--annot-panel);
+  border-bottom: 1px solid var(--annot-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+
+.annot-toolbar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.annot-toolbar::-webkit-scrollbar-thumb {
+  background: var(--annot-border);
+  border-radius: 4px;
+}
+
+.annot-title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.annot-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  background: var(--annot-border-soft);
+}
+
+.annot-hint {
+  min-width: 0;
+  color: var(--annot-text-weak);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annot-btn {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  background: transparent;
+  color: var(--annot-text);
+  border-radius: var(--annot-radius);
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+
+.annot-btn:hover {
+  background: var(--annot-hover);
+}
+
+.annot-btn:focus-visible {
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 1px;
+}
+
+.annot-btn--primary {
+  background: var(--annot-accent);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+.annot-btn--primary:hover {
+  filter: brightness(1.08);
+  background: var(--annot-accent);
+}
+
+.annot-btn.is-active {
+  background: var(--annot-accent-soft);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-btn:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.annot-btn:disabled:hover {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- 中央画布 */
+.annot-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--annot-stage);
+  /* 细棋盘格，纯装饰，方便看清透明图片边界 */
+  background-image:
+    linear-gradient(45deg, rgba(127, 127, 127, .06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(127, 127, 127, .06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(127, 127, 127, .06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(127, 127, 127, .06) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* 底图与 SVG 放在同一个 transform 容器里，坐标天然对齐（Anot8 的做法） */
+.annot-transform {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  /* 不要加 will-change: transform。
+     它会把整层（连同里面的 SVG 手柄）先光栅化成一张纹理，缩放时直接拉伸纹理，
+     于是 350% 下手柄圆点就糊了 —— 去掉之后浏览器按最终比例重新矢量渲染，边缘才锐利。 */
+  box-shadow: var(--annot-shadow);
+}
+
+/* 画布可视窗口：底图只显示窗口里的那一块。
+   裁剪改的是窗口尺寸与底图平移；没有这层裁切，被裁掉的外围仍然会露在
+   画布外面，看起来就像「裁剪没生效」。标注与手柄在上层 SVG，不受影响。 */
+.annot-viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 底图按画布矩阵贴进画布：旋转 / 翻转 / 裁切 / 留白全靠这一个 transform */
+.annot-base {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  max-width: none;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.annot-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  /* 标注对象层需要接收指针事件；拖拽时禁止浏览器接管手势 */
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.annot-svg[data-active-tool="arrow"] {
+  cursor: crosshair;
+}
+
+.annot-svg[data-active-tool="select"] {
+  cursor: default;
+}
+
+/* 平移：平时张开手掌，按住拖动时握拳（与系统拖拽手势一致） */
+.annot-svg[data-active-tool="pan"] {
+  cursor: grab;
+}
+
+.annot-svg[data-active-tool="pan"].is-panning {
+  cursor: grabbing;
+}
+
+/* 透明粗描边负责命中，视觉元素不拦截指针 */
+.annot-object {
+  cursor: move;
+}
+
+.annot-object.is-preview {
+  opacity: .7;
+  pointer-events: none;
+}
+
+/* 选中态靠虚线框 + 手柄表达就够了。
+   这里原本给形状加 drop-shadow 发光，但滤镜的模糊半径会随画布缩放一起放大 ——
+   放大到 350% 时变成一圈 7px 的光晕，看着就是「模糊」。 */
+.annot-object.is-selected .annot-shape {
+  filter: none;
+}
+
+.annot-handle {
+  cursor: pointer;
+}
+
+.annot-handle[data-handle="curve"] {
+  cursor: crosshair;
+}
+
+.annot-handle[data-handle="move"] {
+  cursor: move;
+}
+
+.annot-handle[data-handle="rotate"] {
+  cursor: grab;
+}
+
+.annot-selection-box {
+  pointer-events: none;
+}
+
+.annot-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--annot-text-weak);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- 底部状态栏 */
+/* 左：分辨率　中：当前工具提示　右：缩放按钮 */
+.annot-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  padding: 3px 12px;
+  background: var(--annot-panel);
+  border-top: 1px solid var(--annot-border);
+  color: var(--annot-text-weak);
+  font-size: 12px;
+}
+
+.annot-status__size {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+
+.annot-status__center {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.annot-status__center .annot-hint {
+  max-width: 100%;
+  text-align: center;
+}
+
+.annot-status__message {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--annot-text);
+}
+
+.annot-status__message[hidden] {
+  display: none;
+}
+
+.annot-status__zoom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.annot-status__value {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.annot-status__error {
+  color: var(--b3-theme-error, #d23f31);
+}
+
+.annot-btn--tiny {
+  padding: 2px 9px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---------------------------------------------------------------- 主区与侧边栏 */
+.annot-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+/* 左侧图像工具栏：放裁切、扩画布、旋转、翻转这类「动画面」的操作，
+   与顶部的「画标注」工具栏分开，避免两类功能混在一起找不到。 */
+.annot-imagebar {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--annot-panel);
+  border-right: 1px solid var(--annot-border);
+}
+
+.annot-imagebar .annot-icon-button {
+  width: 34px;
+  height: 32px;
+}
+
+.annot-imagebar .annot-icon-button.is-active {
+  background: var(--annot-accent);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+/* 裁剪面板：右侧栏，比例网格 + 尺寸 + 应用（画布上只留遮罩、手柄与 ✓ / ✕） */
+.annot-sidebar[hidden] {
+  display: none !important;
+}
+
+.annot-crop-side {
+  padding-bottom: 12px;
+}
+
+.annot-crop-ratios {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.annot-crop-ratio {
+  appearance: none;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  background: transparent;
+  color: var(--annot-text-weak);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.annot-crop-ratio:hover {
+  border-color: var(--annot-accent);
+  color: var(--annot-text);
+}
+
+.annot-crop-ratio.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+.annot-crop-info {
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border-radius: var(--annot-radius);
+  background: var(--annot-hover);
+  color: var(--annot-text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.annot-crop-tip {
+  margin: 0 10px 12px;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.annot-crop-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.annot-crop-actions .annot-btn {
+  flex: 1 1 0;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+/* 裁切时：框内可拖，画布其余地方是拉框的十字 */
+.annot-root.is-cropping [data-crop-box] {
+  cursor: move;
+}
+
+.annot-root.is-cropping .annot-svg,
+.annot-root.is-cropping .annot-stage {
+  cursor: crosshair;
+}
+
+/* 扩展画布浮层 */
+.annot-extend {
+  position: absolute;
+  z-index: 9;
+  top: 96px;
+  left: 52px;
+  width: 302px;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-size: 12px;
+  background: var(--annot-panel);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius-b);
+  box-shadow: var(--annot-shadow);
+}
+
+.annot-extend[hidden] {
+  display: none !important;
+}
+
+.annot-extend .annot-btn--primary {
+  width: 100%;
+}
+
+.annot-extend__block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+
+.annot-extend__label {
+  color: var(--annot-text-weak);
+  font-size: 11px;
+}
+
+/* 方向盘在左、四个方向的数值在右：面板不用为了四行输入再长高一截 */
+.annot-extend__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 6px;
+}
+
+.annot-extend__amounts {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.annot-amount {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.annot-amount > span {
+  flex: 0 0 12px;
+  font-size: 11px;
+  color: var(--annot-text-weak);
+}
+
+.annot-amount > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 2px 5px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--annot-text);
+  background: var(--annot-bg);
+  border: 1px solid var(--annot-border);
+  border-radius: 4px;
+  user-select: text;
+}
+
+/* 没选这个方向 / 已连接但不是第一个：整行淡下去，输入框改虚线，光标也进不去 */
+.annot-amount.is-locked > input {
+  color: var(--annot-text-weak);
+  background: transparent;
+  border-color: var(--annot-border-soft);
+  border-style: dashed;
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* 能输入的那一行稍微强调一点，和锁死的三行一眼能分开 */
+.annot-amount:not(.is-locked) > input {
+  border-color: var(--annot-border);
+  background: var(--annot-panel);
+}
+
+.annot-amount:not(.is-locked) > span {
+  color: var(--annot-text);
+}
+
+/* 锁链按钮：连接后四个方向共用一个数值 */
+.annot-link {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--annot-text-weak);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.annot-link:hover {
+  background: var(--annot-hover);
+}
+
+.annot-link.is-active {
+  color: var(--annot-accent);
+  border-color: var(--annot-accent);
+  background: var(--annot-accent-soft);
+}
+
+/* 锁链图标是实心两环（1024 画布），只上色不描边 */
+.annot-link__icon {
+  display: block;
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  stroke: none;
+  pointer-events: none;
+}
+
+/* 没选中的方向 / 已连接时的非首项：整行都淡下去，并且光标进不去 */
+.annot-amount.is-locked > span {
+  color: var(--annot-text-weak);
+}
+
+/* 方向选择器：中间方块＝画布（点它＝四周同步），四个方向按钮贴着它四边。
+   按钮是矩形：与方块相邻的那条边＝方块边长（46），另一条边窄一些，
+   所以上面/下面是「横条」（46×26），左面/右面是「竖条」（26×46）。 */
+.annot-dirs {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 26px 46px 26px;
+  grid-template-rows: 26px 46px 26px;
+  gap: 3px;
+  place-items: stretch;
+  margin: 0;
+  grid-template-areas:
+    ". top ."
+    "left center right"
+    ". bottom .";
+}
+
+.annot-dir {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--annot-text);
+  background: transparent;
+  border: 1px solid var(--annot-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.annot-dir--top {
+  grid-area: top;
+}
+
+.annot-dir--left {
+  grid-area: left;
+}
+
+.annot-dir--bottom {
+  grid-area: bottom;
+}
+
+.annot-dir--right {
+  grid-area: right;
+}
+
+/* 中间的方块就是画布本身，点它等于「四周全选 / 全不选」；
+   虚线描边暗示它是一块待扩展的画布 */
+.annot-dir--all {
+  grid-area: center;
+  width: 46px;
+  height: 46px;
+  font-size: 11px;
+  line-height: 1.3;
+  border-radius: 4px;
+  border-style: dashed;
+}
+
+.annot-dir:hover {
+  background: var(--annot-hover);
+}
+
+.annot-dir.is-active {
+  color: var(--annot-accent);
+  border-color: var(--annot-accent);
+  border-style: solid;
+  background: var(--annot-accent-soft);
+  font-weight: 600;
+}
+
+.annot-dir__icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.annot-extend__hint {
+  margin: 0;
+  color: var(--annot-text-weak);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+
+
+.annot-extend__switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--annot-text);
+}
+
+.annot-extend__size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annot-extend__size[hidden] {
+  display: none !important;
+}
+
+.annot-extend__size > span {
+  /* 按文字宽度自适应：单字「上」不再占掉 46px 空白，输入框整体左移更紧凑 */
+  flex: 0 0 auto;
+  min-width: 22px;
+  color: var(--annot-text-weak);
+}
+
+.annot-extend__size > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--annot-text);
+  background: var(--annot-bg);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  user-select: text;
+}
+
+.annot-extend__size > em {
+  flex: 0 0 auto;
+  font-style: normal;
+  color: var(--annot-text-weak);
+}
+
+/* 底色选择器：透明 / 白 / 黑 / 自定义 / 吸管 */
+.annot-bgs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.annot-bg {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--annot-text);
+  /* 这里不能留「透明边框」：背景会铺到 28px，而内描边只画在边框以内（24px），
+     结果浅色圆只看得到 24px 那道环，深色圆看到的是 28px 的填充外沿，两者差一圈。
+     改成零边框 + 外描边，所有圆的轮廓线就都落在同一条 28px 外沿上。 */
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(127, 127, 127, .45);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.annot-bg[data-bg="transparent"] {
+  width: auto;
+  padding: 0 9px;
+  border-radius: var(--annot-radius);
+  background-color: var(--annot-panel);
+  background-image:
+    linear-gradient(45deg, var(--annot-border) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--annot-border) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--annot-border) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--annot-border) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+.annot-bg.is-active {
+  /* 外描边 → 面板色缝隙 → 蓝色选中环，三层都画在圆外侧，不侵占圆面 */
+  box-shadow:
+    0 0 0 1px rgba(127, 127, 127, .45),
+    0 0 0 3px var(--annot-panel),
+    0 0 0 4px var(--annot-accent);
+}
+
+.annot-bg--custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 自定义色块中心加一个十字：一横一竖两条实心矩形。
+   十字颜色由插件按当前底色自动设成黑或白（--annot-cross-color），
+   所以不管底色是白、黑还是彩色，都是一条干净的实心加号，不需要勾边 */
+.annot-bg[data-bg="custom1"]::before,
+.annot-bg[data-bg="custom1"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  background: var(--annot-cross-color, #FFFFFF);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.annot-bg[data-bg="custom1"]::before {
+  width: 11px;
+  height: 1.2px;
+  transform: translate(-50%, -50%);
+}
+
+.annot-bg[data-bg="custom1"]::after {
+  width: 1.2px;
+  height: 11px;
+  transform: translate(-50%, -50%);
+}
+
+/* 吸管色块里的吸管图标：固定 15px，颜色跟随按钮的 color（按底色取反差色） */
+.annot-root .annot-bg[data-role="bg-custom2"] > svg.annot-pick-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  stroke: none;
+  pointer-events: none;
+}
+
+.annot-extend__tip {
+  margin: 8px 0 0;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* 画布底色层：铺在底图下面，只露出扩展出来的留白 */
+.annot-canvas-bg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.annot-root.is-picking .annot-svg,
+.annot-root.is-picking .annot-stage {
+  cursor: crosshair;
+}
+
+.annot-main > .annot-stage {
+  flex: 1 1 auto;
+}
+
+.annot-sidebar {
+  flex: 0 0 252px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--annot-panel);
+  border-left: 1px solid var(--annot-border);
+  transition: flex-basis .18s ease;
+}
+
+.annot-sidebar.is-collapsed {
+  flex-basis: 42px;
+}
+
+.annot-sidebar.is-collapsed .annot-side-panels {
+  display: none;
+}
+
+.annot-sidebar.is-collapsed .annot-panel-head__title {
+  display: none;
+}
+
+.annot-sidebar.is-collapsed .annot-panel-head {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.annot-panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--annot-border);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.annot-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  text-align: center;
+  font-size: 11px;
+}
+
+.annot-icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--annot-text-weak);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  padding: 2px 7px;
+  border-radius: var(--annot-radius);
+}
+
+.annot-icon-btn:hover {
+  background: var(--annot-hover);
+  color: var(--annot-text);
+}
+
+.annot-empty {
+  padding: 16px 10px;
+  color: var(--annot-text-weak);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- 对象列表 */
+.annot-object-list {
+  flex: 0 1 auto;
+  min-height: 60px;
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 6px 8px;
+  scrollbar-width: thin;
+}
+
+.annot-object-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--annot-radius);
+  cursor: pointer;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.annot-object-item:hover,
+.annot-object-item.is-hovered {
+  background: var(--annot-hover);
+}
+
+.annot-object-item.is-selected {
+  background: var(--annot-accent-soft);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent);
+}
+
+.annot-object-item__badge {
+  flex: 0 0 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--annot-border-soft);
+  color: var(--annot-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.annot-object-item__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- 属性面板 */
+.annot-properties {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px 16px;
+  scrollbar-width: thin;
+}
+
+.annot-prop-title {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 0 8px;
+}
+
+.annot-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 10px;
+}
+
+.annot-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.annot-swatch.is-active {
+  border-color: var(--annot-text);
+  box-shadow: 0 0 0 2px var(--annot-panel) inset;
+}
+
+.annot-color-input {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+.annot-color-input:hover { box-shadow: 0 0 0 2px var(--annot-accent-soft); }
+
+.annot-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.annot-prop-row--column {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.annot-prop-row--switch .annot-prop-row__control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-switch {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--annot-accent);
+  cursor: pointer;
+}
+
+.annot-prop-hint {
+  color: var(--annot-text-weak);
+  font-size: 11px;
+}
+
+.annot-prop-row__control.annot-swatch-row {
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 0;
+}
+
+.annot-prop-row__label {
+  flex: 0 0 68px;
+  color: var(--annot-text-weak);
+}
+
+.annot-prop-row__control {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annot-properties input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--annot-accent);
+}
+
+.annot-prop-value {
+  flex: 0 0 36px;
+  text-align: right;
+  color: var(--annot-text-weak);
+  font-variant-numeric: tabular-nums;
+}
+
+.annot-properties select,
+.annot-properties textarea {
+  width: 100%;
+  background: var(--annot-bg);
+  color: var(--annot-text);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  user-select: text;
+}
+
+.annot-properties select {
+  padding: 2px 4px;
+}
+
+.annot-properties textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.annot-prop-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.annot-prop-btn--danger {
+  color: var(--b3-theme-error, #d23f31);
+  border-color: var(--b3-theme-error, #d23f31);
+}
+
+/* ---------------------------------------------------------------- 画布内文字编辑
+   输入框只是压在画面上的一层「透明文字替身」：输入时看到什么，提交后就是什么。
+   绝不能给它底色、边框、阴影或内边距，否则点一下会先冒出一块白板、提交后又突然消失。
+   选择器带上 .annot-root，并用 !important 压过思源对 textarea 的全局样式。 */
+.annot-root textarea.annot-text-editor {
+  position: absolute;
+  z-index: 5;
+  box-sizing: content-box;
+  margin: 0;
+  padding: 0 !important;
+  min-height: 0;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  /* 打出来的字就是成品颜色（脚本写入对象颜色 + 外沿白影），过程中不做反色；
+     光标颜色由脚本按所在位置的底图明暗挑黑 / 白 */
+  caret-color: var(--annot-accent);
+  font-family: var(--b3-font-family, sans-serif);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+  /* 不要任何占位提示：输入框里只有光标 */
+}
+.annot-root textarea.annot-text-editor::placeholder {
+  color: transparent !important;
+}
+
+/* 输入框那圈细提示框：单独一层，只让这条边框反色，文字不受影响 */
+.annot-root .annot-text-frame {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  box-sizing: content-box;
+  border: 0;
+  outline: 1px solid rgba(255, 255, 255, 0.34);
+  outline-offset: 3px;
+  mix-blend-mode: difference;
+}
+
+.annot-object.is-hovered .annot-shape {
+  filter: none;
+}
+
+/* 正在编辑的那份 SVG 文字先藏起来，避免和输入框里的字叠成双影 */
+.annot-object.is-editing {
+  visibility: hidden;
+}
+
+/* ---------------------------------------------------------------- 里程碑五：体验收尾 */
+.annot-root {
+  position: relative;
+}
+
+.annot-tool-buttons {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.annot-tools-toggle {
+  display: none;
+}
+
+.annot-root.is-compact .annot-tool-buttons {
+  display: none;
+}
+
+.annot-root.is-compact .annot-tools-toggle {
+  display: inline-block;
+}
+
+.annot-tool-menu,
+.annot-help {
+  position: absolute;
+  z-index: 9;
+  background: var(--annot-panel);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius-b);
+  box-shadow: var(--annot-shadow);
+}
+
+.annot-tool-menu {
+  top: 46px;
+  left: 96px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 300px;
+  padding: 10px;
+}
+
+.annot-tool-menu[hidden],
+.annot-help[hidden] {
+  display: none !important;
+}
+
+.annot-help {
+  top: 52px;
+  right: 20px;
+  width: 430px;
+  max-width: calc(100% - 40px);
+  padding: 12px 14px;
+  font-size: 12px;
+}
+
+.annot-help__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--annot-border);
+}
+
+.annot-help__row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  line-height: 1.5;
+}
+
+.annot-help__row kbd {
+  flex: 0 0 200px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--annot-accent);
+}
+
+.annot-theme-select {
+  flex: 0 0 auto;
+  background: var(--annot-bg);
+  color: var(--annot-text);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.annot-layer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 10px;
+}
+
+.annot-layer-row .annot-prop-row__label {
+  flex: 0 0 100%;
+}
+
+.annot-layer-row button {
+  flex: 1 1 auto;
+  min-width: 46px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--annot-text);
+  background: transparent;
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  cursor: pointer;
+}
+
+.annot-layer-row button:hover {
+  background: var(--annot-hover);
+}
+
+.annot-prop-tip {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--annot-border-soft);
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.annot-stage.is-panning,
+.annot-stage.is-panning .annot-svg {
+  cursor: grabbing !important;
+}
+
+.annot-status .annot-icon-btn {
+  font-size: 13px;
+  padding: 1px 6px;
+}
+
+/* 文档内标注预览层：只读叠加，不拦截任何鼠标操作。
+   用 :has() 让图片的直接父容器成为定位参照，完全不改原有元素的
+   style / class / data-*，避免思源把临时属性写回笔记内容。 */
+.annot-doc-overlay {
+  pointer-events: none !important;
+}
+
+span[data-type="img"] > span:has(> svg.annot-doc-overlay) {
+  position: relative;
+}
+
+/* ---------------------------------------------------------------- 两行工具栏（参考 Anot8） */
+.annot-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 6px 12px;
+  background: var(--annot-panel);
+  border-bottom: 1px solid var(--annot-border);
+  white-space: nowrap;
+}
+
+.annot-titlebar__name {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.annot-titlebar__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.annot-titlebar > .annot-btn,
+.annot-titlebar > .annot-theme-select {
+  flex: 0 0 auto;
+}
+
+/* 全屏 / 还原：图标按钮，贴着「保存」右边；全屏时底色变主色以便看出当前状态 */
+.annot-titlebar__fullscreen {
+  flex: 0 0 auto;
+  margin-left: 2px;
+}
+
+.annot-root.is-fullscreen .annot-titlebar__fullscreen.is-active {
+  background: var(--annot-accent);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+/* ================================================================
+   全屏（PC）→ 绝对阻挡 + 安全边距
+   ① html.annot-fs：全屏期间把思源自己画的窗口按钮全部藏掉（桌面端用
+      Electron 的窗口控制浮层，那几个按钮不在 DOM 里，只能靠窗口进系统
+      全屏撤掉；这里再兜一层 DOM 版按钮，desktop-window 窗口里就是它们）。
+      退出全屏只删这一个类，不会有任何残留。
+   ② 插件自己的「保存 / 取消 / 还原」往内收一圈：鼠标甩到屏幕角上也
+      只会落在顶栏空白处，不会误触任何按钮。
+   ================================================================ */
+html.annot-fs body {
+  overflow: hidden !important;
+}
+
+html.annot-fs .toolbar__window,
+html.annot-fs #windowControls,
+html.annot-fs #minWindow,
+html.annot-fs #maxWindow,
+html.annot-fs #restoreWindow,
+html.annot-fs #closeWindow,
+html.annot-fs .b3-dialog__close {
+  display: none !important;
+}
+
+/* 全屏时顶栏保持和窗口化**完全一样**的内边距与间距。
+   以前这里为了躲思源原生的最小化 / 最大化 / 关闭，额外加了右内边距，
+   但那三个按钮全屏时本来就被 Chromium 撤掉了，躲空气的结果是
+   我们自己的按钮在进全屏的一瞬间「从右往左跳一段」。 */
+.annot-toolbar {
+  gap: 12px;
+  min-height: 48px;
+  background: var(--annot-bg);
+}
+
+/* 顶栏里每个分组框：统一高度、统一内边距 —— 与右侧「自定义预设」那一格完全等高 */
+.annot-toolbar .annot-group {
+  height: 36px;
+  padding: 0 10px;
+  gap: 6px;
+}
+
+.annot-toolbar .annot-group .annot-icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.annot-toolbar .annot-group .annot-btn--mini {
+  height: 28px;
+  padding: 0 10px;
+}
+
+.annot-group {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid var(--annot-border);
+  border-radius: 9px;
+  background: var(--annot-panel);
+}
+
+.annot-group__label {
+  padding: 0 1px 0 0;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.annot-tool-buttons {
+  display: flex;
+  gap: 2px;
+}
+
+.annot-icon-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--annot-text);
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+
+/* 把图标规格固定在插件自己的作用域里。思源有大量针对 svg 的全局规则，
+   这里显式声明 fill / stroke / 线宽 / 尺寸，保证工具栏图标在思源里
+   与预览图一致：空心图标不会被填实，实心图标（马赛克、高亮笔）仍保留填充。 */
+.annot-root .annot-icon-button > svg.annot-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.annot-root .annot-icon-button > svg.annot-icon [fill="currentColor"] {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* 思源 app/src/assets/scss/util/_reset.scss 里有一条 svg { fill: currentColor; display: inline-block }。
+   它是 CSS 声明，优先级高于写在 <svg> 上的 fill="none" 属性：只靠属性兜底的线性图标，
+   在真实思源里会被整块填成实心色块（圆角档位、下拉折角都踩过这个坑，
+   预览图是在没有思源样式的 harness 里截的，所以看不出问题）。
+   这里按插件作用域把它压回去：图标默认只描边，只有元素自己写了
+   fill="currentColor" 的实心部分才填色。所有新图标都必须落进这张网。 */
+.annot-root svg.annot-icon,
+.annot-root svg.annot-corner-icon,
+.annot-root svg.annot-chevron,
+.annot-root svg.annot-arrow-style-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.annot-root svg.annot-icon [fill="currentColor"],
+.annot-root svg.annot-corner-icon [fill="currentColor"],
+.annot-root svg.annot-arrow-style-icon [fill="currentColor"] {
+  fill: currentColor;
+  stroke: none;
+}
+
+.annot-icon-button:hover {
+  background: var(--annot-hover);
+}
+
+.annot-icon-button:focus-visible {
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 1px;
+}
+
+.annot-icon-button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+.annot-icon-button.is-active,
+.annot-icon-button[data-tool].is-active {
+  background: var(--annot-accent);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+.annot-swatch2 {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.annot-swatch2.is-active {
+  box-shadow: 0 0 0 2px var(--annot-panel), 0 0 0 4px var(--annot-accent);
+}
+
+/* ---------------------------------------------------------------- 顶栏属性入口 + 悬浮条 */
+/* 每个属性是一个「分组框」：外框由 .annot-group 提供（1px 边框 + 9px 圆角 + 面板底色），
+   框内平时是四档预设按钮，进入「自定义预设」后换成一个带文字的按钮。 */
+.annot-attr-group {
+  gap: 6px;
+  padding: 0 10px;
+}
+
+/* 预设档位：透明边框的小胶囊，选中时描边 + 淡色底（与旧版一致，不改成整块实心） */
+.annot-preset-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 7px;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.annot-preset-button:hover { background: var(--annot-hover); }
+
+.annot-preset-button.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+/* 线宽档位里那条粗细示意线 */
+.annot-line-sample {
+  display: inline-block;
+  width: 16px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+/* 分组框里的小标题（线型 / 填充 / 字号） */
+.annot-group__label {
+  padding: 0 1px 0 0;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.annot-attr-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 预设编辑模式：点中的那一档描个圈，一眼看出小窗改的是它 */
+.annot-preset-button.is-editing-slot,
+.annot-swatch2.is-editing-slot {
+  box-shadow: 0 0 0 2px var(--annot-accent);
+}
+
+/* 小窗里的色板：点一下就把「这一档」换成那个颜色 */
+.annot-attr-swatches .annot-swatch2 {
+  cursor: pointer;
+}
+
+/* 取色器 + 十六进制读数（预设悬浮窗里） */
+.annot-attr-pickrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-attr-hex {
+  font-size: 11px;
+  color: var(--annot-text-weak);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+
+/* 悬浮条：相对插件容器定位（absolute），永远落在插件矩形内，不会飘到思源界面上 */
+.annot-attr-pop {
+  position: absolute;
+  z-index: 80;
+  min-width: 210px;
+  max-width: 306px;
+  padding: 10px;
+  border: 1px solid var(--annot-border);
+  border-radius: 12px;
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, .2), 0 2px 8px rgba(15, 23, 42, .08);
+}
+
+.annot-attr-pop[hidden],
+.annot-attr-panel[hidden] { display: none; }
+
+.annot-attr-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.annot-attr-panel__head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--annot-text-weak);
+}
+
+.annot-attr-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-attr-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.annot-dash-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.annot-dash-chip:hover { background: var(--annot-hover); }
+
+.annot-dash-chip.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+/* 滑块 + 数字框：一条轨道、一个可键入的数字 */
+.annot-num-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.annot-num-row__label {
+  flex: none;
+  font-size: 11px;
+  color: var(--annot-text-weak);
+}
+
+.annot-num-row__unit {
+  flex: none;
+  font-size: 11px;
+  color: var(--annot-text-weak);
+}
+
+.annot-num-row__input {
+  flex: 0 0 auto;
+  width: 54px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: var(--annot-bg);
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+
+.annot-num-row.is-disabled {
+  opacity: .45;
+  pointer-events: none;
+}
+
+.annot-attr-pop input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 96px;
+  height: 18px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.annot-attr-pop input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right,
+    var(--annot-accent) var(--annot-range-ratio, 0%),
+    var(--annot-border) var(--annot-range-ratio, 0%));
+}
+
+.annot-attr-pop input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--annot-accent);
+  border-radius: 50%;
+  background: var(--annot-panel);
+}
+
+.annot-attr-pop input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--annot-border);
+}
+
+.annot-attr-pop input[type="range"]::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--annot-accent);
+}
+
+.annot-attr-pop input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--annot-accent);
+  border-radius: 50%;
+  background: var(--annot-panel);
+}
+
+/* 填充：「无」＋ 色点 ＋ 系统取色器 */
+.annot-fill-none {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 9px;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.annot-fill-none.is-active {
+  border-color: var(--annot-accent);
+  color: var(--annot-accent);
+  font-weight: 700;
+}
+
+.annot-fill-picker {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--annot-border);
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: conic-gradient(#EF4444, #F59E0B, #10B981, #06B6D4, #8B5CF6, #EF4444);
+}
+
+.annot-fill-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.annot-fill-picker__cross {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.annot-fill-picker__cross::before,
+.annot-fill-picker__cross::after {
+  content: "";
+  position: absolute;
+  background: #1F2937;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .85);
+}
+
+.annot-fill-picker__cross::before {
+  left: 50%;
+  top: 0;
+  width: 1.5px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+.annot-fill-picker__cross::after {
+  top: 50%;
+  left: 0;
+  height: 1.5px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+
+/* 三段式：取消 / 应用 / 恢复默认 */
+.annot-btn--mini {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.annot-preset-slot { gap: 4px; padding: 3px 5px; }
+.annot-preset-slot.is-editing { background: var(--annot-hover); border-color: var(--annot-accent); }
+
+/* 自定义颜色：一颗带十字的圆球。十字永远画在球面上，所以取过色之后
+   仍然和左边那排固定色点区分得开；没取过色时球是白的（提示这里能取色）。 */
+.annot-custom-color {
+  position: relative;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--annot-border);
+  border-radius: 50%;
+  background: var(--annot-ball, #ffffff);
+  cursor: pointer;
+}
+
+.annot-custom-color.is-active {
+  box-shadow: 0 0 0 2px var(--annot-panel), 0 0 0 4px var(--annot-accent);
+}
+
+.annot-custom-color__cross {
+  position: absolute;
+  inset: 0;
+  /* 一横一竖两笔组成十字，颜色按球面色自动取黑或白 */
+  background:
+    linear-gradient(var(--annot-ball-ink, #1f2937), var(--annot-ball-ink, #1f2937)) center / 10px 2px no-repeat,
+    linear-gradient(var(--annot-ball-ink, #1f2937), var(--annot-ball-ink, #1f2937)) center / 2px 10px no-repeat;
+  pointer-events: none;
+}
+
+/* 取色弹窗：贴着锚点按钮下方展开，位置相对插件容器（不会被裁到思源界面上） */
+.annot-color-pop {
+  position: absolute;
+  z-index: 82;
+  width: 272px;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius-b);
+  background: var(--annot-panel);
+  box-shadow: var(--annot-shadow);
+  font-size: 12px;
+  white-space: normal;
+}
+
+.annot-color-pop[hidden] { display: none !important; }
+
+.annot-color-pop__wheel {
+  width: 236px;
+  margin: 2px auto 10px;
+}
+
+.annot-color-pop__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.annot-color-pop__hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--annot-text-weak);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------- 色轮取色器 */
+.annot-cw {
+  --annot-cw-field: var(--annot-hover);
+  --annot-cw-ring-shadow: rgba(0, 0, 0, .18);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--annot-cw-size, 236px);
+}
+
+.annot-cw__wheel {
+  position: relative;
+  width: var(--annot-cw-size, 236px);
+  height: var(--annot-cw-size, 236px);
+  margin: 0 auto;
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.annot-cw__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    #ff0000 0deg, #ffff00 60deg, #00ff00 120deg,
+    #00ffff 180deg, #0000ff 240deg, #ff00ff 300deg, #ff0000 360deg);
+  /* closest-side：100% 才等于圆的半径；默认 farthest-corner 会把洞挖小、整盘变成实心圆 */
+  -webkit-mask: radial-gradient(circle closest-side at 50% 50%,
+    transparent calc(100% - var(--annot-cw-ring, 21px)),
+    #000 calc(100% - var(--annot-cw-ring, 21px) + .5px));
+  mask: radial-gradient(circle closest-side at 50% 50%,
+    transparent calc(100% - var(--annot-cw-ring, 21px)),
+    #000 calc(100% - var(--annot-cw-ring, 21px) + .5px));
+  box-shadow: inset 0 0 0 1px var(--annot-cw-ring-shadow);
+}
+
+.annot-cw__slice {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc((var(--annot-cw-size, 236px) - 2 * var(--annot-cw-ring, 21px)) * .7071);
+  height: calc((var(--annot-cw-size, 236px) - 2 * var(--annot-cw-ring, 21px)) * .7071);
+  transform: translate(-50%, -50%);
+  border-radius: 7px;
+  box-shadow:
+    inset 0 0 0 1px var(--annot-cw-ring-shadow),
+    0 1px 3px rgba(0, 0, 0, .12);
+  cursor: crosshair;
+}
+
+.annot-cw__dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 17px;
+  height: 17px;
+  margin: -8.5px 0 0 -8.5px;
+  border-radius: 50%;
+  border: 2.5px solid #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, .32),
+    0 1px 4px rgba(0, 0, 0, .4),
+    inset 0 0 0 1px rgba(0, 0, 0, .18);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.annot-cw__dot--sv {
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border-width: 2px;
+}
+
+.annot-cw__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-cw__chip {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, .16),
+    0 1px 2px rgba(0, 0, 0, .08);
+}
+
+.annot-cw__fields {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+}
+
+.annot-cw__hex {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: var(--annot-cw-field);
+  border: 1px solid var(--annot-border);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.annot-cw__hex[hidden],
+.annot-cw__rgb[hidden] { display: none; }
+
+.annot-cw__hex:focus-within {
+  border-color: var(--annot-accent);
+  box-shadow: 0 0 0 3px var(--annot-accent-soft);
+}
+
+.annot-cw__hash { font-size: 11px; color: var(--annot-text-weak); }
+
+.annot-cw__hex-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--annot-text);
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .05em;
+  outline: none;
+  text-transform: uppercase;
+}
+
+/* RGB：三个字母在输入框外（上方），框里只有数字 */
+.annot-cw__rgb {
+  display: flex;
+  gap: 5px;
+}
+
+.annot-cw__cell {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.annot-cw__cell > span {
+  padding-left: 2px;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: .06em;
+  color: var(--annot-text-weak);
+}
+
+.annot-cw__cell > input {
+  width: 100%;
+  height: 25px;
+  padding: 0 6px;
+  border: 1px solid var(--annot-border);
+  border-radius: 7px;
+  background: var(--annot-cw-field);
+  color: var(--annot-text);
+  font: 600 11.5px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.annot-cw__cell > input:focus {
+  border-color: var(--annot-accent);
+  box-shadow: 0 0 0 3px var(--annot-accent-soft);
+}
+
+.annot-cw__seg {
+  flex: none;
+  display: flex;
+  height: 26px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--annot-cw-field);
+  border: 1px solid var(--annot-border);
+}
+
+.annot-cw__seg > button {
+  width: 25px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text-weak);
+  font: 600 9px/1 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+
+.annot-cw__seg > button.is-active {
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+}
+
+/* RGB 模式下字母在框外，药丸与数字框底部对齐 */
+.annot-cw.is-rgb .annot-cw__seg { align-self: flex-end; margin-bottom: 3px; }
+
+.annot-cw__readouts {
+  display: flex;
+  gap: 5px;
+}
+
+.annot-cw__readout {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 7px 4px;
+  border-radius: 7px;
+  background: var(--annot-cw-field);
+  min-width: 0;
+}
+
+.annot-cw__readout > i {
+  font-style: normal;
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--annot-text-weak);
+  white-space: nowrap;
+}
+
+.annot-cw__readout > b {
+  font: 600 11.5px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--annot-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 预设编辑模式：色点小窗里的色轮略小一点 */
+.annot-attr-panel [data-role="slot-wheel"] .annot-cw { width: 216px; margin: 0 auto; }
+
+
+.annot-color-pop__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.annot-color-pop__pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-color-pop__well {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--annot-border);
+  border-radius: 9px;
+  background: var(--annot-well, #ffffff);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.annot-color-pop__well input[type="color"] {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.annot-color-pop__hex {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.annot-color-pop__save {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.annot-color-pop__tip {
+  margin: 8px 0 0;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.annot-color-pop__sub {
+  margin: 10px 0 6px;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.annot-color-pop__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 4px 2px 2px;
+  min-height: 30px;
+}
+
+.annot-color-pop__empty {
+  color: var(--annot-text-weak);
+  font-size: 11px;
+}
+
+.annot-color-preset {
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+}
+
+.annot-color-preset__swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--annot-border);
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.annot-color-preset.is-active .annot-color-preset__swatch {
+  box-shadow: 0 0 0 2px var(--annot-panel), 0 0 0 4px var(--annot-accent);
+}
+
+.annot-color-preset.is-dragging { opacity: .55; }
+.annot-color-preset.is-dragging .annot-color-preset__swatch { cursor: grabbing; }
+
+.annot-color-preset__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--annot-text);
+  color: var(--annot-panel);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: .5;
+}
+
+.annot-color-preset:hover .annot-color-preset__remove,
+.annot-color-preset__remove:hover { opacity: 1; }
+
+.annot-preset-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.annot-preset-button:hover {
+  background: var(--annot-hover);
+}
+
+.annot-preset-button.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-line-sample {
+  display: inline-block;
+  width: 16px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.annot-tool-menu {
+  top: 96px;
+  left: 12px;
+}
+
+.annot-help,
+.annot-settings {
+  /* 必须绝对定位浮在画布上：写成文档流会挤掉下方画布。
+     外观与快捷键帮助面板一致，从工具栏右侧（齿轮按钮附近）展开。 */
+  position: absolute;
+  z-index: 10;
+  top: 96px;
+  right: 20px;
+  width: 430px;
+  max-width: calc(100% - 40px);
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 12px 14px;
+  font-size: 12px;
+  background: var(--annot-panel);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius-b);
+  box-shadow: var(--annot-shadow);
+}
+
+/* ---------------------------------------------------------------- 自定义预设（可视化） */
+.annot-settings__body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px;
+}
+
+.annot-settings__foot {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--annot-border-soft);
+}
+
+.annot-settings__foot .annot-btn {
+  flex: 1 1 auto;
+}
+
+.annot-preset-group {
+  padding: 7px 0 5px;
+  border-top: 1px solid var(--annot-border-soft);
+}
+
+.annot-preset-group:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.annot-preset-group__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 4px;
+}
+
+.annot-preset-group__title {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--annot-text);
+}
+
+.annot-preset-group__hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--annot-text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annot-preset-group__ops {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+}
+
+.annot-preset-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 颜色项两列排，面板不用为了 5 个颜色多长出两行 */
+.annot-preset-items[data-items="colors"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+}
+
+.annot-preset-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+/* 颜色：色块点开系统选色器，右边同步显示 / 接受十六进制 */
+.annot-swatch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(127, 127, 127, .45);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.annot-swatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.annot-preset-hex {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+  font-family: var(--b3-font-family-code, ui-monospace, monospace);
+  letter-spacing: .5px;
+  color: var(--annot-text);
+  background: var(--annot-bg);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  user-select: text;
+}
+
+/* 数值：可视化滑块 + 数字框（两边同步）
+   轨道是独立元素（不是 input 背景），这样才能做圆头、并被 JS 改粗细；
+   左右各让出半个滑块，滑块滑到两端时才与圆头同心。 */
+.annot-range-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+}
+
+.annot-range-track {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(127, 127, 127, .45);
+  pointer-events: none;
+}
+
+/* 线宽：一条均匀的圆头直线，height 由 JS 按当前数值设置（拖动时跟着变粗） */
+.annot-range-track--width {
+  height: 4px;
+}
+
+/* 填充透明度：棋盘格（透明）渐变到实色，两端圆头 */
+.annot-range-track--fill {
+  height: 10px;
+  background-image:
+    linear-gradient(90deg, rgba(127, 127, 127, 0) 0%, rgba(127, 127, 127, .85) 100%),
+    repeating-conic-gradient(rgba(127, 127, 127, .18) 0 25%, transparent 0 50%);
+  background-size: 100% 100%, 8px 8px;
+}
+
+/* 字号：一条细的圆头直线 */
+.annot-range-track--font {
+  height: 3px;
+}
+
+.annot-range {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.annot-range::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+}
+
+.annot-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  /* 让 16px 的滑块在 22px 高的轨道里垂直居中 */
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--annot-panel);
+  border: 2px solid var(--annot-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  cursor: pointer;
+}
+
+.annot-range::-moz-range-track {
+  height: 22px;
+  background: transparent;
+}
+
+.annot-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--annot-panel);
+  border: 2px solid var(--annot-accent);
+}
+
+.annot-preset-num {
+  flex: 0 0 54px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+  color: var(--annot-text);
+  background: var(--annot-bg);
+  border: 1px solid var(--annot-border);
+  border-radius: var(--annot-radius);
+  user-select: text;
+}
+
+.annot-preset-item > em {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--annot-text-weak);
+}
+
+.annot-preset-preview {
+  flex: 0 0 24px;
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+  color: var(--annot-text);
+  overflow: hidden;
+}
+
+/* ================================================================
+   移动端（手机 / 平板）：顶部极简导航 + 上下双栏 + 触摸手势
+   PC 端的类名与结构完全不变，这里只在 .annot-root--mobile 下生效。
+   ================================================================ */
+.annot-root--mobile {
+  /* 两栏的固定高度：抽屉与缩放手势都按它们让位 */
+  --annot-style-h: 50px;
+  --annot-rail-h: 70px;
+  font-size: 15px;
+}
+
+/* 键盘弹起（正在写文字）：把所有悬浮栏和参数条整块收掉，
+   画面完全让给内容。**高度一点不改**——改了会触发「适应窗口」，
+   画布被重新缩放，标注全部跑位。 */
+/* 键盘态：把界面高度锁成「弹出键盘之前」的像素值。
+   不锁的话 dvh 会跟着键盘缩小，舞台变矮 → viewBox 与外框比例变化 → 标注整体偏移。 */
+.annot-root--mobile.is-keyboard {
+  /* 只锁高度；flex 一起改会让宽度塌成内容宽度（216px 那种），必须显式 100% */
+  flex: 0 0 auto;
+  width: 100%;
+  height: var(--annot-lock-h, 100dvh);
+}
+
+/* 舞台也锁住：三栏隐藏后若让它自己撑高，SVG 会换一个尺寸，
+   内容按比例重新缩放 —— 那才是「键盘一弹标注全跑位」的真正原因。 */
+.annot-root--mobile.is-keyboard .annot-stage {
+  flex: 0 0 auto;
+  height: var(--annot-lock-stage, auto);
+}
+
+.annot-root--mobile.is-keyboard .annot-mobile-style,
+.annot-root--mobile.is-keyboard .annot-mobile-rail,
+.annot-root--mobile.is-keyboard .annot-mobile-fabs,
+.annot-root--mobile.is-keyboard .annot-mobile-topbar {
+  display: none !important;
+}
+
+/* PC 的三栏界面在手机上隐藏（DOM 保留，PC 测试仍依赖这些节点） */
+.annot-root--mobile .annot-titlebar,
+.annot-root--mobile .annot-toolbar,
+.annot-root--mobile .annot-imagebar,
+.annot-root--mobile .annot-status {
+  display: none;
+}
+
+.annot-root--mobile .annot-main {
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- 顶部：关闭 / 撤销 / 重做 / 完成 */
+.annot-mobile-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  /* 高度＝安全区 + 56：写死高度，安全区只作为内边距，按钮才真正上下居中。
+     用 min-height 时内容区会被安全区吃掉，按钮上溢压到状态栏 / 原生关闭按钮上。 */
+  height: calc(56px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 10px 0;
+  background: var(--annot-panel);
+  border-bottom: 1px solid var(--annot-border);
+}
+
+.annot-root--mobile .annot-mobile-top__close {
+  flex: 0 0 40px;
+}
+
+.annot-root--mobile .annot-mobile-top__done {
+  flex: 0 0 auto;
+  max-width: 34vw;
+  white-space: nowrap;
+}
+
+.annot-mobile-top__spacer {
+  flex: 1 1 auto;
+}
+
+/* 顶部只放按钮，不要 PC 那种带边框的分组框 */
+.annot-root--mobile .annot-mobile-top .annot-group {
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.annot-mobile-top .annot-icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.annot-mobile-top__close {
+  color: var(--annot-text);
+}
+
+.annot-mobile-top .annot-btn {
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+}
+
+.annot-mobile-top__done {
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- 上栏：跟着工具变的参数 */
+/* v0.22.2：两条栏取消底板 —— 不再是一条白色长条，
+   改成「透明悬浮层 + 每个按钮自带毛玻璃小底」，观感上按钮是浮在画布上的 */
+.annot-mobile-style {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  min-height: var(--annot-style-h);
+  margin: 0 8px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.annot-mobile-style__scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 14px 6px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+
+.annot-mobile-style__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 右端渐隐：告诉用户「还能往左滑」，被截断的按钮不会看着像坏掉 */
+.annot-mobile-style__scroll {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+
+/* 一组参数（颜色 / 粗细 / 线型 / 填充 / 字号）：每类一个圆角矩形小框，
+   和 PC 顶栏的分组框同一套语言——框是底，里面的按钮不再自带底色，避免双层毛玻璃 */
+.annot-mobile-style__group {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 7px;
+  margin-right: 7px;
+  border: 1px solid rgba(127, 127, 127, .15);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--annot-panel) 82%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .07);
+}
+
+.annot-mobile-style__group:last-child {
+  margin-right: 0;
+}
+
+/* 框内按钮：去掉自带的小毛玻璃底，选中态用主色浅底 */
+.annot-mobile-style__group .annot-mobile-chip {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.annot-mobile-style__group .annot-mobile-chip.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 700;
+}
+
+.annot-mobile-style__group .annot-mobile-swatch {
+  width: 26px;
+  height: 26px;
+}
+
+.annot-mobile-style__group .annot-mobile-swatch.is-active {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14),
+    0 0 0 2px var(--annot-panel),
+    0 0 0 3.5px var(--annot-accent);
+}
+
+/* 取消底板后，这类纯文字标签是直接压在照片上的，颜色要够深才看得清 */
+.annot-mobile-style__label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--annot-text);
+  opacity: .78;
+  letter-spacing: .02em;
+  text-shadow: 0 1px 2px var(--annot-panel), 0 0 6px var(--annot-panel);
+}
+
+.annot-mobile-style__group--hint {
+  border-right: 0;
+}
+
+.annot-mobile-style__hint {
+  font-size: 12px;
+  color: var(--annot-text-weak);
+  white-space: nowrap;
+}
+
+/* ================================================================
+   v0.22.0 移动端：两颗独立圆钮（左 选择 / 右 对齐）
+   触屏不设平移：画布用双指拖动挪画面、捏合缩放
+   ================================================================ */
+.annot-mobile-fabs {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  /* 贴在两条卡片上沿；缩放胶囊已挪到画布正中，两侧不再需要让位 */
+  bottom: calc(var(--annot-rail-h) + var(--annot-style-h) + 26px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.annot-fab {
+  pointer-events: auto;
+  position: relative;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(15, 23, 42, .10);
+  border-radius: 50%;
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .20);
+}
+
+.annot-fab > svg {
+  width: 22px;
+  height: 22px;
+}
+
+.annot-fab.is-active {
+  background: var(--annot-accent);
+  border-color: var(--annot-accent);
+  color: var(--annot-accent-text);
+  box-shadow: 0 8px 20px rgba(53, 117, 240, .40);
+}
+
+.annot-fab__count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, .45);
+}
+
+.annot-fab__count[hidden] {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- 顶部悬浮参数栏
+   手机上工具专属的参数（箭头样式 / 圆线 / 圆角 / 编号格式 / 端点…）没有地方放，
+   统一挪到画布顶部：一枚参数一枚小方按钮，点开像气泡一样向下展开。
+   底部两条栏只管「通用外观」，两边不重复。 */
+.annot-mobile-topbar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 24;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(127, 127, 127, .14);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--annot-panel) 90%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, .13);
+}
+
+.annot-mobile-topbar[hidden] {
+  display: none !important;
+}
+
+.annot-mobile-topbar__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 48px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--annot-text);
+  font-size: 10px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.annot-mobile-topbar__btn > svg {
+  width: 22px;
+  height: 15px;
+}
+
+/* 三类图标各自的原始比例不同，不能一把尺子量：
+   箭头预览 48×20（宽扁）、圆角预览 20×20（正方）、其余自带图标 24×16 */
+.annot-mobile-topbar__btn > svg.annot-arrow-style-icon {
+  width: 32px;
+  height: 13px;
+}
+
+.annot-mobile-topbar__btn > svg.annot-corner-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* 用字符当图标的按钮（编号 1 / I / a、倍数 2x、圆角 8） */
+.annot-mobile-topbar__char {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 17px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.annot-mobile-topbar__btn.is-open {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-mobile-topbar__btn.is-on {
+  color: var(--annot-accent);
+}
+
+/* 气泡：相对整条栏水平居中（栏本身居中于屏幕），宽度固定 220 */
+.annot-mobile-pop {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 220px;
+  padding: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(127, 127, 127, .14);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--annot-panel) 97%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  backdrop-filter: blur(22px) saturate(1.7);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, .22);
+}
+
+/* 尖角指向被点开的那颗按钮（位置由 positionMobilePop 写进 --tip-x） */
+.annot-mobile-pop::before {
+  content: "";
+  position: absolute;
+  top: -5.5px;
+  left: var(--tip-x, 50%);
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  transform: rotate(45deg);
+  border-left: 1px solid rgba(127, 127, 127, .14);
+  border-top: 1px solid rgba(127, 127, 127, .14);
+  border-radius: 2px 0 0 0;
+  background: color-mix(in srgb, var(--annot-panel) 97%, transparent);
+}
+
+.annot-mobile-pop__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--annot-text);
+}
+
+.annot-mobile-pop__item > svg {
+  width: 30px;
+  height: 20px;
+}
+
+.annot-mobile-pop__item > svg.annot-arrow-style-icon {
+  width: 38px;
+  height: 16px;
+}
+
+.annot-mobile-pop__item > svg.annot-corner-icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* 颜色 / 形状这类靠色块表达的选项，格子中间放一颗圆点 */
+.annot-mobile-pop__dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(127, 127, 127, .22);
+}
+
+.annot-mobile-pop__item.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--annot-accent) 42%, transparent);
+}
+
+/* 滑块类（马赛克块大小 / 模糊程度 / 聚光灯暗度）：占满一整行 */
+.annot-mobile-pop__slider {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 4px;
+}
+
+.annot-mobile-pop__slider > span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--annot-text-weak);
+}
+
+.annot-mobile-pop__slider > b {
+  flex: 0 0 auto;
+  min-width: 40px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  color: var(--annot-text);
+}
+
+.annot-mobile-pop__slider input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  accent-color: var(--annot-accent);
+}
+
+/* 数字档位（圆角半径）用文字格子 */
+.annot-mobile-pop__item--text {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 顶部并列的「缩放 / 对象」：两枚 80×36 等宽按钮，不用图标 */
+.annot-fab__pair {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-fab-pill {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  width: 80px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(127, 127, 127, .16);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--annot-panel) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .10);
+  color: var(--annot-text-weak);
+  font-size: 12px;
+  line-height: 34px;
+  white-space: nowrap;
+}
+
+.annot-fab-pill b {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--annot-text);
+}
+
+.annot-fab-pill.is-open {
+  color: var(--annot-accent);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .10),
+    inset 0 0 0 1px color-mix(in srgb, var(--annot-accent) 34%, transparent);
+}
+
+/* 多选时上栏变成的对齐条：已选数量 + 8 颗按钮（都能左右滑） */
+.annot-mobile-style__group--align {
+  border-right: 0;
+  margin-right: 0;
+  padding-right: 0;
+  gap: 4px;
+}
+
+.annot-mobile-style__count {
+  flex: 0 0 auto;
+  padding: 0 4px 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--annot-accent);
+  white-space: nowrap;
+}
+
+.annot-mobile-align {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--annot-text);
+}
+
+.annot-mobile-align > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.annot-mobile-align:active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+}
+
+/* 色点：30px 圆，选中的外圈套一圈主色 */
+.annot-mobile-swatch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--annot-swatch-color, var(--annot-text));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14);
+}
+
+.annot-mobile-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--annot-panel), 0 0 0 4px var(--annot-accent);
+}
+
+/* 自定义颜色：彩虹圆 + 白色加号，点开系统选色器 */
+.annot-mobile-swatch--custom {
+  overflow: hidden;
+  background: conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #06b6d4, #8b5cf6, #ef4444);
+}
+
+.annot-mobile-swatch--custom::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(#fff, #fff) center / 12px 2px no-repeat,
+    linear-gradient(#fff, #fff) center / 2px 12px no-repeat;
+  pointer-events: none;
+}
+
+.annot-mobile-swatch--custom input[type="color"] {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 数值胶囊：粗细 / 填充百分比 / 字号 / 裁剪比例 */
+.annot-mobile-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 46px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--annot-border);
+  border-radius: 11px;
+  background: var(--annot-panel);
+  background: color-mix(in srgb, var(--annot-panel) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+  color: var(--annot-text);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.annot-mobile-chip.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-mobile-chip__line {
+  display: block;
+  width: 18px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.annot-mobile-chip__num {
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- 下栏：工具 + 图像操作 */
+.annot-mobile-rail {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+/* 一整个圆角矩形 dock：用伪元素铺底，不动盒模型（--annot-rail-h 的高度基准靠它，
+   一旦给 rail 自己加 padding/border，上面的两颗圆钮就会压到属性栏上） */
+.annot-mobile-rail::before {
+  content: "";
+  position: absolute;
+  inset: -3px 0 -1px;
+  z-index: 0;
+  border: 1px solid rgba(127, 127, 127, .15);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--annot-panel) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.7);
+  backdrop-filter: blur(18px) saturate(1.7);
+  box-shadow: 0 6px 22px rgba(15, 23, 42, .13);
+}
+
+.annot-mobile-rail > * {
+  position: relative;
+  z-index: 1;
+}
+
+.annot-mobile-rail__scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 5px 16px 5px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+
+.annot-mobile-rail__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.annot-mobile-rail__scroll {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+
+.annot-mobile-rail__group {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.annot-mobile-rail__sep {
+  flex: 0 0 auto;
+  width: 1px;
+  margin: 8px 2px;
+  background: var(--annot-border-soft);
+}
+
+/* 工具按钮：图标在上、文字在下，热区 54×56（手指够用）。
+   底色不画在按钮上，而是由 .annot-mobile-rail::before 画一整条 dock，
+   按钮只在选中时出一块主色浅底。 */
+.annot-mobile-tool {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 54px;
+  min-height: 56px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--annot-text-weak);
+  font-size: 11px;
+  line-height: 1.1;
+}
+
+.annot-mobile-tool__icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+
+/* 思源有大量针对 svg 的全局规则（会把线性图标填成实心块）。
+   移动端按钮结构与 PC 不同（span 包着 svg），复用不到 .annot-icon-button 那条，
+   这里按同样规格再声明一次：空心图标不填充、实心图标（马赛克 / 高亮笔）保留填充。 */
+.annot-root .annot-mobile-tool__icon > svg.annot-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.annot-root .annot-mobile-tool__icon > svg.annot-icon [fill="currentColor"] {
+  fill: currentColor;
+  stroke: none;
+}
+
+.annot-mobile-tool__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 选中态：图标与文字变主色，底换成主色浅底（毛玻璃仍在，避免在照片上看不清） */
+.annot-mobile-tool.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--annot-accent) 32%, transparent);
+}
+
+.annot-mobile-tool.is-active:hover {
+  background: var(--annot-accent-soft);
+}
+
+/* ---------------------------------------------------------------- 画布与手势 */
+.annot-root--mobile .annot-stage {
+  /* 手机上不要棋盘格：一片格子会让人以为那是"没画的地方" */
+  background: var(--annot-bg);
+  background-image: none;
+  touch-action: none;
+}
+
+.annot-root--mobile .annot-svg {
+  touch-action: none;
+}
+
+/* 画布外的图片给自己一点投影，视觉重心回到图上 */
+.annot-root--mobile .annot-transform {
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
+}
+
+/* ---------------------------------------------------------------- 底部抽屉 */
+/* 对象抽屉：从屏幕最底边长出来，盖住底部两条栏（所以 z-index 必须高于圆钮与顶部栏） */
+.annot-root--mobile .annot-sidebar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  flex: 0 0 auto;
+  max-height: min(46vh, 420px);
+  border: 0;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -12px 32px rgba(15, 23, 42, .26);
+  transform: translateY(101%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  transition: transform .26s cubic-bezier(.32, .72, 0, 1), opacity .2s ease;
+  /* 顶部 20px 让给抓手，底部避开 Home 指示条 */
+  padding: 20px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  will-change: transform;
+}
+
+/* 拖动中：去掉过渡，让面板严格跟着手指走 */
+.annot-root--mobile .annot-sidebar.is-dragging {
+  transition: none;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* 顶部小横条：唯一的「往下滑关闭」入口，也是它让面板看起来像个抽屉 */
+.annot-mobile-grab {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+
+.annot-mobile-grab > span {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, .38);
+}
+
+.annot-mobile-grab:active {
+  cursor: grabbing;
+}
+
+.annot-root--mobile .annot-sidebar.is-open {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.annot-root--mobile .annot-sidebar[hidden] {
+  display: none;
+}
+
+.annot-root--mobile .annot-sidebar .annot-object-list {
+  /* 抽屉总高由 max-height 兜着，列表自己滚，不再单独限一个很小的 18vh */
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.annot-root--mobile .annot-crop-side {
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+/* 注意：不要用 `[data-handle] circle { r: ... }` 去放大手柄。
+   手柄里有两层圆：看得见的圆点 + 透明的命中圆，两者半径都按 zoom 换算成屏幕像素；
+   一旦被 CSS 的 r 覆盖，命中圆会从「屏幕 13px」缩成几个画布单位，手指就点不中，
+   于是「想拖角点」变成「把整个标注拖走」。尺寸统一走 renderHandles 的 sizes 参数。 */
+
+/* 手机没有悬停：不要让对象/按钮停在"高亮"状态 */
+.annot-root--mobile .annot-object.is-hovered .annot-shape {
+  filter: none;
+}
+
+.annot-root--mobile .annot-icon-button:hover,
+.annot-root--mobile .annot-icon-btn:hover,
+.annot-root--mobile .annot-btn:hover {
+  background: transparent;
+}
+
+.annot-root--mobile .annot-icon-button.is-active:hover,
+.annot-root--mobile .annot-icon-button.is-active {
+  background: var(--annot-accent-soft);
+}
+
+/* ================================================================
+   移动端全屏：去掉 Dialog 的外边距、圆角与遮罩，铺满整块屏幕
+   （真正的尺寸在 AnnotEditor.open() 里传 100vw / 100vh）
+   ================================================================ */
+.b3-dialog.annot-dialog-fullscreen {
+  padding: 0 !important;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__scrim {
+  background: transparent;
+}
+
+.b3-dialog.annot-dialog-fullscreen > .b3-dialog__container,
+.b3-dialog.annot-dialog-fullscreen .annot-dialog.b3-dialog__container {
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border-radius: 0 !important;
+  box-shadow: none;
+}
+
+/* 圆角可能来自容器、body 或 root 任意一层：逐层清零，顶栏才不会露出两个圆角 */
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__container,
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__body,
+.b3-dialog.annot-dialog-fullscreen .annot-root,
+.b3-dialog.annot-dialog-fullscreen .annot-mobile-top {
+  border-radius: 0 !important;
+}
+
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__body {
+  overflow: hidden;
+}
+
+/* 思源移动端会在对话框右上角叠一个自带的关闭按钮，正好压在我们的「完成」上 */
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__close,
+.b3-dialog.annot-dialog-fullscreen .b3-dialog__header {
+  display: none !important;
+}
+
+/* ================================================================
+   PC 界面重构（v0.12.0）：左侧竖栏 / 顶部通用属性 / 画布悬浮条 / 右侧三区块
+   移动端仍在后面用 .annot-root--mobile 规则隐藏这些 PC 专属元素。
+   ================================================================ */
+
+/* 左侧竖栏：默认单列；高度不够时由 syncToolColumns() 加 is-two-col 自动换双列 */
+.annot-imagebar {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 5px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+.annot-imagebar.is-two-col { flex-basis: 82px; }
+.annot-imagebar__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.annot-imagebar.is-two-col .annot-imagebar__group {
+  display: grid;
+  grid-template-columns: repeat(2, 34px);
+  gap: 4px;
+  justify-content: center;
+}
+.annot-imagebar__sep {
+  width: 34px;
+  height: 1px;
+  flex: none;
+  background: var(--annot-border);
+  margin: 3px 0;
+}
+.annot-imagebar.is-two-col .annot-imagebar__sep { width: 72px; }
+.annot-imagebar .annot-icon-button { width: 34px; height: 32px; flex: none; }
+
+/* 顶部栏：只放通用属性 */
+.annot-toolbar { gap: 10px; }
+.annot-toolbar__label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: var(--annot-text-weak);
+}
+.annot-tools-toggle { display: none !important; }
+.annot-line-demo {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 3px solid currentColor;
+  vertical-align: middle;
+}
+.annot-line-demo--dashed { border-top-style: dashed; }
+.annot-line-demo--dotted { border-top-style: dotted; }
+/* 点划线没有对应的 border-style，用小段重复渐变画「长划—点—长划」 */
+.annot-line-demo--dashdot {
+  height: 3px;
+  border-top: 0;
+  background-image: repeating-linear-gradient(to right,
+    currentColor 0 9px, transparent 9px 12px, currentColor 12px 14px, transparent 14px 17px);
+}
+
+/* 画布悬浮工具条：跟随当前工具 / 选中对象显示 */
+.annot-context-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 参数多了（序号：格式下拉 + 端点 + 样式下拉）允许换行，整条仍然居中 */
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  /* 绝对定位 + left:50% 会让「自动宽度」只按半个画布算，内容一多就提前折行；
+     明确写成 max-content 才能按内容铺开，再由 max-width 兜住超宽的情况 */
+  width: max-content;
+  max-width: calc(100% - 28px);
+  padding: 7px 12px;
+  border: 1px solid var(--annot-border);
+  border-radius: 10px;
+  background: var(--annot-panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .14);
+  font-size: 12px;
+  white-space: nowrap;
+  /* 不用 overflow:auto——箭头样式的下拉列表要能溢出到工具条外面 */
+  overflow: visible;
+}
+.annot-context-bar[hidden] { display: none !important; }
+.annot-context__title {
+  flex: none;
+  font-weight: 700;
+  color: var(--annot-text-weak);
+  letter-spacing: .04em;
+}
+
+/* 常驻基座：选择 / 平移，永远在悬浮条最左侧 */
+.annot-context__base {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.annot-context__tool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  cursor: pointer;
+}
+
+.annot-context__tool > svg {
+  width: 19px;
+  height: 19px;
+}
+
+.annot-context__tool:hover { background: var(--annot-hover); }
+
+.annot-context__tool.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+
+.annot-context__sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--annot-border);
+}
+
+/* ================================================================
+   多选 / 对齐（v0.21.0）
+   ① 「对齐」按钮与选择 / 平移同格，按下才让画布 Ctrl 多选生效；
+   ② 选中两个以上，右侧就地展开 8 个对齐 / 分布按钮（图标跟随主题）；
+   ③ 画布上：对象各一圈细虚线 + 外围一个联合包围框。
+   ================================================================ */
+.annot-context__tool--align > svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 8 个对齐动作：整块自带一个浅色底，和左边那颗「对齐」按钮视觉上连成一组 */
+.annot-context__align {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  margin-left: 2px;
+  border: 1px solid var(--annot-border);
+  border-radius: 8px;
+  background: var(--annot-hover);
+}
+
+.annot-context__align > .annot-context__title {
+  margin-right: 2px;
+  font-weight: 600;
+}
+
+.annot-context__align-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  cursor: pointer;
+}
+
+.annot-context__align-btn > svg {
+  width: 17px;
+  height: 17px;
+}
+
+.annot-context__align-btn:hover {
+  background: var(--annot-panel);
+  border-color: var(--annot-border);
+}
+
+.annot-context__align-btn:active {
+  transform: translateY(1px);
+}
+
+/* 画布上的选择反馈：线宽用 non-scaling-stroke，缩放画布时始终 1px */
+.annot-selection-box {
+  fill: none;
+  stroke: var(--annot-accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: .85;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.annot-selection-union {
+  fill: none;
+  stroke: var(--annot-accent);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 4;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 2px var(--annot-accent-soft));
+}
+
+
+/* 一组小方块按钮：编号格式 / 引线端点 */
+.annot-context__chips {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.annot-context__chip {
+  flex: none;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.annot-context__chip:hover { background: var(--annot-hover); }
+
+.annot-context__chip.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+  font-weight: 600;
+}
+
+/* 聚光灯「遮罩颜色」：按钮左侧带一个小色球，黑白一眼分得清 */
+.annot-context__chip--mask {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+}
+
+.annot-context__chip--mask::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .22);
+  background: #000;
+}
+
+.annot-context__chip--mask[data-value="white"]::before {
+  background: #FFF;
+}
+.annot-context__hint { flex: none; color: var(--annot-text-weak); }
+.annot-context__item { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.annot-context__item input[type="range"] { width: 92px; }
+.annot-context__item b {
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.annot-context__arrow {
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.annot-context__arrow:hover { background: var(--annot-hover); }
+.annot-context__arrow.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+/* 箭头样式用可点击的线段图案，不用文字 */
+.annot-context__arrow--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 30px;
+  padding: 2px;
+}
+.annot-context__arrow--icon > svg.annot-arrow-style-icon { width: 40px; height: 24px; }
+.annot-arrow-style-icon stop:first-child { stop-color: currentColor; stop-opacity: .12; }
+.annot-arrow-style-icon stop:last-child { stop-color: currentColor; stop-opacity: 1; }
+.annot-context__arrow--icon.is-active > svg.annot-arrow-style-icon { color: var(--annot-accent-text); }
+
+/* 右侧面板：对象 / 层级 / 属性三个可折叠区块 */
+.annot-sidebar { position: relative; flex: 0 0 268px; overflow: visible; }
+.annot-sidebar.is-collapsed { flex-basis: 0; width: 0; border-left: 0; }
+.annot-side-panels {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.annot-side-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-bottom: 1px solid var(--annot-border);
+}
+.annot-side-section:last-child { border-bottom: 0; }
+/* 对象按内容高度、层级只占一行、属性吃掉剩余空间，避免中间留出半屏空白 */
+.annot-side-section[data-section="objects"] { flex: 0 1 auto; max-height: 45%; }
+.annot-side-section[data-section="layers"] { flex: 0 0 auto; }
+.annot-side-section[data-section="props"] { flex: 1 1 auto; }
+.annot-side-section.is-folded { flex: 0 0 auto; max-height: none; }
+.annot-side-section.is-folded .annot-section-body { display: none; }
+.annot-section-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--annot-text-weak);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.annot-section-toggle:hover { color: var(--annot-accent); }
+.annot-section-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.annot-object-list, .annot-objects-body, .annot-properties {
+  flex: 1 1 auto;
+  max-height: none;
+}
+.annot-objects-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.annot-objects-body .annot-object-list {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.annot-object-item { cursor: grab; user-select: none; }
+.annot-object-item.is-dragging { opacity: .45; }
+.annot-object-item.is-over { outline: 2px dashed var(--annot-accent); }
+/* 复制 / 删除直接放在每个对象行末，不再有「选中对象」那一行 */
+.annot-object-item__actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+.annot-object-item__btn {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  opacity: .6;
+}
+.annot-object-item:hover .annot-object-item__btn,
+.annot-object-item.is-selected .annot-object-item__btn { opacity: 1; }
+.annot-object-item__btn:hover { background: var(--annot-hover) !important; }
+.annot-object-item__btn > svg.annot-icon { width: 15px !important; height: 15px !important; }
+/* 「层级」栏目只放四个按钮 */
+.annot-layer-controls {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 8px;
+  align-content: start;
+}
+.annot-layer-controls button {
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.annot-layer-controls button:hover:not(:disabled) { background: var(--annot-hover); }
+.annot-layer-controls button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 整体收起拉手：始终相对插件容器定位，不用 fixed，
+   否则收起后会跑到整个思源窗口的最右边 */
+.annot-side-handle {
+  position: absolute;
+  left: -15px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 11;
+  width: 15px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--annot-border);
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
+  background: var(--annot-panel);
+  color: var(--annot-text-weak);
+  box-shadow: -2px 2px 8px rgba(0, 0, 0, .08);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.annot-side-handle:hover { color: var(--annot-accent); }
+.annot-sidebar.is-collapsed .annot-side-handle {
+  position: absolute;
+  left: auto;
+  right: 0;
+  top: 50%;
+  border-radius: 12px 0 0 12px;
+}
+
+/* 属性内容区右侧的复制 / 删除图标按钮 */
+.annot-prop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.annot-prop-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--annot-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--annot-text);
+  cursor: pointer;
+}
+.annot-prop-icon-btn:hover { background: var(--annot-hover); }
+.annot-prop-icon-btn--danger { color: #E53935; }
+.annot-prop-icon-btn > svg.annot-icon { width: 18px; height: 18px; }
+/* 纯线条镂空：宿主 / 主题的填充规则一律不许把轮廓填成实心块 */
+.annot-prop-icon-btn > svg.annot-icon,
+.annot-prop-icon-btn > svg.annot-icon path {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+/* 移动端保持原来的上下双栏，这些 PC 专属元素一律不出现。
+   「层级」现在只是四个小按钮，抽屉里仍可用，所以不再整块隐藏。 */
+.annot-root--mobile .annot-context-bar,
+.annot-root--mobile .annot-side-handle {
+  display: none !important;
+}
+.annot-root--mobile .annot-side-section[data-section="layers"] {
+  flex: 0 0 auto;
+}
+
+/* ================================================================
+   箭头样式下拉（v0.13.1）
+   参考 ShareX 的 ArrowStylePickerDropdown：
+   按钮与每个选项都是「文字 + 图案」，图案在右、文字在左。
+   ================================================================ */
+.annot-arrow-picker {
+  position: relative;
+  flex: none;
+}
+.annot-arrow-picker__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--annot-border);
+  border-radius: 7px;
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.annot-arrow-picker__button:hover { border-color: var(--annot-accent); }
+.annot-arrow-picker__button:focus-visible {
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 1px;
+}
+.annot-arrow-picker.is-open .annot-arrow-picker__button { border-color: var(--annot-accent); }
+.annot-arrow-picker__label {
+  min-width: 40px;
+  text-align: left;
+  line-height: 1;
+}
+.annot-arrow-picker__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 20px;
+  color: var(--annot-text);
+}
+.annot-arrow-picker__icon > svg.annot-arrow-style-icon {
+  width: 48px;
+  height: 20px;
+  display: block;
+}
+.annot-arrow-picker__chevron {
+  flex: none;
+  color: var(--annot-text-weak);
+  transition: transform .16s ease;
+}
+.annot-arrow-picker.is-open .annot-arrow-picker__chevron { transform: rotate(180deg); }
+
+.annot-arrow-picker__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 178px;
+  padding: 4px;
+  border: 1px solid var(--annot-border);
+  border-radius: 9px;
+  background: var(--annot-panel);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+}
+.annot-arrow-picker.is-open .annot-arrow-picker__menu { display: flex; }
+.annot-arrow-picker__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.annot-arrow-picker__item:hover { background: var(--annot-hover); }
+.annot-arrow-picker__item.is-active {
+  background: var(--annot-hover);
+  color: var(--annot-accent);
+}
+.annot-arrow-picker__item.is-active .annot-arrow-picker__icon { color: var(--annot-accent); }
+.annot-arrow-picker__item .annot-arrow-picker__icon { color: currentColor; }
+
+/* 序号的两个下拉（v0.17.0）：编号格式是「名称 + 一个样子」，
+   箭头样式沿用上面的「文字 + 图案」。文字列给个最小宽度，避免切换时按钮乱跳。 */
+.annot-picker--text .annot-arrow-picker__button { min-width: 128px; }
+.annot-picker--text .annot-arrow-picker__label { min-width: 62px; }
+.annot-arrow-picker__icon--chip {
+  width: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--annot-hover);
+  color: var(--annot-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.annot-arrow-picker__item.is-active .annot-arrow-picker__icon--chip {
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}
+.annot-arrow-picker__menu .annot-arrow-picker__item-label { flex: 1 1 auto; }
+
+/* ================================================================
+   矩形圆角下拉（v0.13.3）
+   参考 ShareX 的 CornerRadiusPickerDropdown：
+   按钮是「数值 + 折角图案」，展开后是 5 列图案网格，每格下面标出数值。
+   ================================================================ */
+.annot-corner-picker {
+  position: relative;
+  flex: none;
+}
+.annot-corner-picker__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--annot-border);
+  border-radius: 7px;
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.annot-corner-picker__button:hover { border-color: var(--annot-accent); }
+.annot-corner-picker__button:focus-visible {
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 1px;
+}
+.annot-corner-picker.is-open .annot-corner-picker__button { border-color: var(--annot-accent); }
+.annot-corner-picker__value {
+  min-width: 14px;
+  text-align: right;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.annot-corner-picker__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: currentColor;
+}
+.annot-corner-picker__icon > svg.annot-corner-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+/* 按钮里的图案比下拉格里的小一号，和 12px 的数字才不打架 */
+.annot-corner-picker__button .annot-corner-picker__icon,
+.annot-corner-picker__button .annot-corner-picker__icon > svg.annot-corner-icon {
+  width: 16px;
+  height: 16px;
+}
+.annot-corner-picker.is-open .annot-corner-picker__button svg.annot-chevron { transform: rotate(180deg); }
+.annot-corner-picker__button svg.annot-chevron {
+  flex: none;
+  color: var(--annot-text-weak);
+  transition: transform .16s ease;
+}
+
+.annot-corner-picker__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: none;
+  grid-template-columns: repeat(5, 36px);
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--annot-border);
+  border-radius: 9px;
+  background: var(--annot-panel);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+}
+.annot-corner-picker.is-open .annot-corner-picker__menu { display: grid; }
+.annot-corner-picker__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.annot-corner-picker__item:hover { background: var(--annot-hover); }
+.annot-corner-picker__item.is-active {
+  background: var(--annot-hover);
+  color: var(--annot-accent);
+}
+.annot-corner-picker__item-label { font-variant-numeric: tabular-nums; }
+
+.annot-context__toggle {
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--annot-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.annot-context__toggle:hover { background: var(--annot-hover); }
+.annot-context__toggle.is-active {
+  border-color: var(--annot-accent);
+  background: var(--annot-accent);
+  color: var(--annot-accent-text);
+}

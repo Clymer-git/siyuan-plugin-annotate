@@ -1,0 +1,59 @@
+{
+  "name": "siyuan-plugin-annotate",
+  "version": "0.26.11",
+  "private": true,
+  "description": "思源笔记图片标注插件 —— PNG 内嵌工程数据、可反复二次编辑",
+  "type": "module",
+  "author": "Clymer-git",
+  "license": "MIT",
+  "url": "https://github.com/Clymer-git/siyuan-plugin-annotate",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clymer-git/siyuan-plugin-annotate.git"
+  },
+  "homepage": "https://github.com/Clymer-git/siyuan-plugin-annotate",
+  "minAppVersion": "3.0.12",
+  "backends": [
+    "all"
+  ],
+  "frontends": [
+    "desktop",
+    "desktop-window",
+    "mobile"
+  ],
+  "displayName": {
+    "default": "勾画阁·猫抓",
+    "zh-CN": "勾画阁·猫抓",
+    "en": "勾画阁·猫抓"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh-CN": "README.md"
+  },
+  "icon": "icon.png",
+  "preview": "preview.png",
+  "keywords": [
+    "图片",
+    "标注",
+    "箭头",
+    "马赛克",
+    "裁剪",
+    "annotate",
+    "image",
+    "png",
+    "annotation",
+    "crop"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "pack": "python scripts/make_zip.py",
+    "verify": "node scripts/verify.mjs",
+    "smoke": "node scripts/smoke-dom.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

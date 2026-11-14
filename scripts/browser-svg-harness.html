@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN" data-theme-mode="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>annotate svg write-back harness</title>
+<link rel="stylesheet" href="/index.css">
+<style>
+  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
+  /* 真思源里 .b3-dialog 是铺满窗口的遮罩，里面的容器按 Dialog 传的 94vw / 90vh 排。
+     这里照做，否则「全屏 / 还原」在测试页里看不出差别。 */
+  .b3-dialog { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .b3-dialog__container { max-width: none; max-height: none; }
+  .b3-dialog__body { position: relative; }
+</style>
+</head>
+<body>
+<script>
+/*
+ * 真实浏览器里跑「保存 → 得到 SVG 资源 → 把这张 SVG 当普通图片加载」这条链路：
+ * 只靠 jsdom 无法证明浏览器真的能渲染我们生成的 SVG（万一 XML 不合法就是白图）。
+ */
+window.__uploads = [];
+window.__updates = [];
+window.__puts = [];
+window.__savedPng = "";
+window.__savedPackage = null;
+window.__svgText = "";
+window.__ready = false;
+window.__error = "";
+
+// 从 PNG 的 tEXt 块里把插件内嵌的工程数据解出来
+function readPackage(bytes) {
+  let off = 8;
+  while (off + 12 <= bytes.length) {
+    const len = (((bytes[off] << 24) | (bytes[off + 1] << 16)
+      | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0);
+    const type = String.fromCharCode(...bytes.subarray(off + 4, off + 8));
+    if (type === "tEXt" && off + 12 + len <= bytes.length) {
+      const text = new TextDecoder().decode(bytes.subarray(off + 8, off + 8 + len));
+      const split = text.indexOf("\0");
+      if (split > 0 && text.slice(0, split) === "siyuan-plugin-annotate") {
+        try { return JSON.parse(text.slice(split + 1)); } catch (_) { return null; }
+      }
+    }
+    off += 12 + len;
+  }
+  return null;
+}
+
+const listeners = new Map();
+const state = {files: new Map()};
+// 插件自己的接口调用要被打桩，但 harness 自身还要用真 fetch 取静态资源
+const realFetch = window.fetch.bind(window);
+
+class FakePlugin {
+  constructor(o) {
+    Object.assign(this, o);
+    this.i18n = o.i18n || {};
+    this.data = {};
+    this.eventBus = {on: (t, cb) => listeners.set(t, cb), off: () => {}, once: () => {}};
+  }
+}
+class FakeDialog {
+  constructor(o) {
+    const el = document.createElement("div");
+    el.className = "b3-dialog";
+    el.innerHTML = '<div class="b3-dialog__container annot-dialog">' +
+      '<div class="b3-dialog__header" style="height:0;padding:0;border:0"></div>' +
+      '<div class="b3-dialog__body"></div></div>';
+    // 真思源会把 width/height 写成容器上的内联样式（94vw / 90vh）。
+    // 这里照做，否则「全屏放大 / 还原」在测试页里根本看不出差别。
+    const boxEl = el.querySelector(".b3-dialog__container");
+    if (o.width) boxEl.style.width = o.width;
+    if (o.height) boxEl.style.height = o.height;
+    // 模拟真机：外壳带内边距、容器带圆角。插件必须自己把它们清零才能真铺满，
+    // 否则顶部会残留两个灰圆角（用户实际看到的问题）。
+    if (o.width === "100vw") {
+      el.style.padding = "8px";
+      const box = el.querySelector(".b3-dialog__container");
+      box.style.borderRadius = "16px";
+      box.style.overflow = "hidden";
+      const probe = document.createElement("button");
+      probe.className = "b3-dialog__close";
+      probe.textContent = "x";
+      probe.style.cssText = "position:absolute;top:8px;right:8px;width:32px;height:32px;border:0";
+      el.append(probe);
+    }
+    document.body.append(el);
+    this.element = el;
+    this.options = o;
+  }
+  destroy() { this.element.remove(); this.options.destroyCallback?.(); }
+}
+
+window.fetch = async (url, options = {}) => {
+  const endpoint = String(url);
+  if (endpoint === "/api/file/getFile") {
+    const {path: p} = JSON.parse(options.body);
+    const data = state.files.get(p);
+    if (data === undefined) return new Response("not found", {status: 404});
+    return new Response(data, {status: 200, headers: {"Content-Type": "application/octet-stream"}});
+  }
+  if (endpoint === "/api/file/putFile") {
+    const form = options.body;
+    const path = form.get("path");
+    const buffer = await form.get("file").arrayBuffer();
+    state.files.set(path, buffer);
+    window.__puts.push(path);
+    window.__savedPath = path.replace(/^data\//, "");
+    if (/\.png$/i.test(path)) {
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      }
+      window.__savedPng = "data:image/png;base64," + btoa(binary);
+      window.__savedPackage = readPackage(bytes);
+    }
+    return new Response(JSON.stringify({code: 0, msg: "", data: null}), {status: 200});
+  }
+  if (endpoint === "/upload") {
+    const form = options.body;
+    const file = form.get("file[]");
+    const name = file?.name || "upload.bin";
+    state.files.set("data/assets/" + name, await file.arrayBuffer());
+    window.__uploads.push(name);
+    return new Response(JSON.stringify({code: 0, msg: "", data: {succMap: {[name]: "assets/" + name}}}), {status: 200});
+  }
+  if (endpoint === "/api/block/updateBlock") {
+    window.__updates.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({code: 0, msg: "", data: null}), {status: 200});
+  }
+  // v0.10.7：保存后清理上一版成品；引用数查询按「没有别处引用」返回
+  if (endpoint === "/api/file/removeFile") {
+    const {path} = JSON.parse(options.body);
+    window.__removed = window.__removed || [];
+    window.__removed.push(path);
+    state.files.delete(path);
+    return new Response(JSON.stringify({code: 0, msg: "", data: null}), {status: 200});
+  }
+  if (endpoint === "/api/query/sql") {
+    return new Response(JSON.stringify({code: 0, msg: "", data: [{n: 0}]}), {status: 200});
+  }
+  return new Response("not found", {status: 404});
+};
+
+(async () => {
+  try {
+    // 底图：拿服务器上那张真实 PNG 的字节，模拟 data/assets/demo.png
+    // ?asset=pattern.png 换一张「有花纹」的底图，用来看放大镜是否真的把画面放大了
+    const assetName = new URLSearchParams(location.search).get("asset") || "demo.png";
+    const bytes = await (await realFetch("/assets/" + assetName)).arrayBuffer();
+    state.files.set("data/assets/demo.png", bytes);
+    // 另一份同样的字节，用来看「不经过旋转/裁切」时的原始效果（模糊校验用）
+    state.files.set("data/assets/fresh.png", bytes);
+    state.files.set("data/assets/crop.png", bytes);
+    state.files.set("data/assets/text.png", bytes);
+
+    const code = await (await realFetch("/index.js")).text();
+    const fakeSiyuan = {Plugin: FakePlugin, Dialog: FakeDialog, getFrontend: () => "desktop", showMessage: () => {}};
+    const moduleObj = {exports: {}};
+    new Function("require", "module", "exports", code)(
+      (k) => (k === "siyuan" ? fakeSiyuan : {}), moduleObj, moduleObj.exports,
+    );
+    const Cls = (moduleObj.exports || moduleObj.exports).default || moduleObj.exports;
+
+    window.siyuan = {
+      config: {appearance: {mode: 0, modeOS: false}},
+      languages: {plugin: "插件"},
+      menus: {menu: {element: document.createElement("div"), addItem: (item) => {
+        // 菜单项对象身上挂着插件写的 click 回调，点它等价于点菜单
+        window.__menuItem = item;
+        return document.createElement("button");
+      }, append: () => {}}},
+    };
+
+    const plugin = new Cls({app: {}, name: "siyuan-plugin-annotate", displayName: "勾画阁·猫抓", i18n: {}});
+    plugin.onload();
+
+    window.__openImage = (assetPath, width, blockId) => {
+      const fakeImg = {
+        getAttribute: (n) => (n === "data-src" ? assetPath : n === "alt" ? "" : "/" + assetPath),
+        // 模拟「正文里把图片拖窄过」：思源把宽度写在 img 的父 span 上
+        parentElement: width ? {style: {width}} : null,
+        closest: () => null,
+      };
+      const fakeBlock = {getAttribute: (n) => (n === "data-type" ? "NodeParagraph" : blockId || "202611080000000-abcdefg")};
+      const element = {
+        querySelector: (s) => (s === "img" ? fakeImg : null),
+        closest: (s) => (s === "[data-node-id]" ? fakeBlock : null),
+      };
+      listeners.get("open-menu-image")({detail: {protyle: {}, element, menu: {addItem: () => {}, addSeparator: () => {}}}});
+      window.__menuItem.click();
+    };
+    // 真实 DOM 版的「打开图片」：用来验证「图片带图注」时的判定
+    // （思源会把图注渲染成 .protyle-action__title，里面有文本，不能被当成正文文字）
+    window.__openImageWithCaption = (assetPath, caption, blockId, width) => {
+      const block = document.createElement("div");
+      block.setAttribute("data-node-id", blockId || "202611080000000-caption");
+      block.setAttribute("data-type", "NodeParagraph");
+      const wrap = document.createElement("span");
+      wrap.setAttribute("data-type", "img");
+      wrap.className = "img";
+      wrap.innerHTML = '<span> </span><span style="' + (width ? "width: " + width + ";" : "") + '">'
+        + '<img src="/' + assetPath + '" data-src="' + assetPath + '" alt="图注" data-title="' + caption + '" />'
+        + '<span class="protyle-action__title"><span>' + caption + '</span></span>'
+        + '</span><span> </span>';
+      block.append(wrap);
+      document.body.append(block);
+      listeners.get("open-menu-image")({detail: {protyle: {}, element: wrap, menu: {addItem: () => {}, addSeparator: () => {}}}});
+      window.__menuItem.click();
+      return block;
+    };
+
+    window.__openImage("assets/demo.png");
+    window.__ready = true;
+  } catch (error) {
+    window.__error = String(error && error.stack || error);
+  }
+})();
+</script>
+</body>
+</html>

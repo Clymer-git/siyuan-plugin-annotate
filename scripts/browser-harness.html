@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN" data-theme-mode="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>annotate real-browser repro</title>
+<link rel="stylesheet" href="/index.css">
+<style>
+  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
+  .b3-dialog__container { width: 100vw !important; height: 100vh !important; max-width: none; }
+  .b3-dialog__body { position: relative; }
+</style>
+</head>
+<body>
+<script>
+/* 真实浏览器复现台：记录完整事件序列（含真实焦点变化）与输入框出现/消失 */
+window.__log = [];
+window.__lastHas = false;
+function log() { window.__log.push(Array.from(arguments).join(" ")); }
+
+["pointerdown", "mousedown", "pointerup", "mouseup", "click", "focusin", "focusout", "dblclick"].forEach((type) => {
+  document.addEventListener(type, (e) => {
+    const t = e.target;
+    const tag = t && t.tagName ? t.tagName.toLowerCase() : String(t);
+    let cls = "";
+    if (t && typeof t.className === "string" && t.className) cls = "." + t.className.split(" ")[0];
+    if (t && t.getAttribute && t.getAttribute("data-tool")) cls += "[tool=" + t.getAttribute("data-tool") + "]";
+    log("EV", type, tag + cls, "active=" + (document.activeElement?.tagName || "none"), "defaultPrevented=" + e.defaultPrevented);
+  }, true);
+});
+
+new MutationObserver(() => {
+  const has = !!document.querySelector(".annot-text-editor");
+  if (has !== window.__lastHas) {
+    window.__lastHas = has;
+    log("TEXTAREA", has ? "APPEAR" : "DISAPPEAR", "active=" + (document.activeElement?.tagName || "none"));
+  }
+}).observe(document.body, {childList: true, subtree: true});
+
+const listeners = new Map();
+const dialogs = [];
+class FakePlugin {
+  constructor(o) {
+    Object.assign(this, o);
+    this.i18n = o.i18n || {};
+    this.data = {};
+    this.eventBus = {on: (t, cb) => listeners.set(t, cb), off: () => {}, once: () => {}};
+  }
+}
+class FakeDialog {
+  constructor(o) {
+    const el = document.createElement("div");
+    el.className = "b3-dialog";
+    el.innerHTML = '<div class="b3-dialog__container annot-dialog">' +
+      '<div class="b3-dialog__header" style="height:0;padding:0;border:0"></div>' +
+      '<div class="b3-dialog__body"></div></div>';
+    document.body.append(el);
+    this.element = el;
+    this.options = o;
+    dialogs.push(this);
+  }
+  destroy() { this.element.remove(); this.options.destroyCallback?.(); }
+}
+
+function makeImageDataUrl() {
+  // 造一张有点纹理的"截图"：纯色底图上加斜纹和色块，
+  // 这样预览里的马赛克/高亮笔才看得出效果（纯平底色打码等于没变化）
+  const c = document.createElement("canvas");
+  c.width = 1200;
+  c.height = 800;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#d8dde6";
+  ctx.fillRect(0, 0, 1200, 800);
+  ctx.strokeStyle = "#c6cedb";
+  ctx.lineWidth = 3;
+  for (let x = -800; x < 1200; x += 26) {
+    ctx.beginPath();
+    ctx.moveTo(x, 800);
+    ctx.lineTo(x + 800, 0);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#9aa6bb";
+  ctx.fillRect(200, 200, 300, 200);
+  ctx.fillStyle = "#8f9bb0";
+  ctx.fillRect(720, 240, 260, 300);
+  ctx.fillStyle = "#b7c0cf";
+  ctx.fillRect(180, 560, 420, 160);
+  return c.toDataURL("image/png");
+}
+
+window.__ready = false;
+window.__error = "";
+(async () => {
+  try {
+    const code = await (await fetch("/index.js")).text();
+    const fakeSiyuan = {
+      Plugin: FakePlugin, Dialog: FakeDialog,
+      getFrontend: () => "desktop", showMessage: () => {},
+    };
+    const moduleObj = {exports: {}};
+    const exportsObj = moduleObj.exports;
+    new Function("require", "module", "exports", code)(
+      (k) => (k === "siyuan" ? fakeSiyuan : {}), moduleObj, exportsObj,
+    );
+    const Cls = (moduleObj.exports || exportsObj).default || moduleObj.exports;
+
+    window.siyuan = {
+      config: {appearance: {mode: 0, modeOS: false}},
+      languages: {plugin: "插件"},
+      menus: {
+        menu: {
+          element: document.createElement("div"),
+          addItem: (i) => { window.__menuItem = i; return document.createElement("button"); },
+          append: () => {},
+        },
+      },
+    };
+
+    window.__plugin = new Cls({app: {}, name: "siyuan-plugin-annotate", displayName: "勾画阁·猫抓", i18n: {}});
+    window.__plugin.onload();
+
+    // 有 /assets/source.png 时用它当底图（做集市预览图要放真图），否则用合成的示意底图
+    window.__imageUrl = makeImageDataUrl();
+    try {
+      // 这里是原生 fetch（下面才把 window.fetch 换成打桩版）
+      const sourceRes = await fetch("/assets/source.png");
+      if (sourceRes.ok) {
+        const blob = await sourceRes.blob();
+        window.__imageUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => resolve(makeImageDataUrl());
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch {
+      // 没有就用合成图，不影响其它截图脚本
+    }
+    const fakeImg = {getAttribute: () => window.__imageUrl};
+    // data-type 要真实：插件只在段落里才敢整段替换图片（图文混排/列表项会跳过）
+    const fakeBlock = {getAttribute: (n) => (n === "data-type" ? "NodeParagraph" : "202611080000000-abcdefg")};
+    const element = {
+      querySelector: (s) => (s === "img" ? fakeImg : null),
+      closest: (s) => (s === "[data-node-id]" ? fakeBlock : null),
+    };
+    listeners.get("open-menu-image")({detail: {
+      protyle: {}, element,
+      menu: {addItem: () => {}, addSeparator: () => {}},
+    }});
+    window.__menuItem.click();
+
+    // 文档内预览用的假 sidecar + 一段真实的正文图片块 DOM
+    const docScene = {
+      version: 1, blockId: "doc-block-1", assetPath: "assets/demo.png",
+      imageWidth: 1200, imageHeight: 800,
+      objects: [{
+        id: "doc-obj-1", type: "arrow",
+        geometry: {start: {x: 100, y: 100}, end: {x: 700, y: 500}, control: null},
+        style: {color: "#EF4444", lineWidth: 6, opacity: 1},
+        meta: {label: "箭头", createdAt: 1, updatedAt: 1},
+      }],
+      viewport: {zoom: 1, panX: 0, panY: 0}, updatedAt: 1,
+    };
+    const docFiles = {
+      "data/storage/petal/siyuan-plugin-annotate/index.json":
+        JSON.stringify({"doc-block-1": "data/assets/demo.png.annot.json"}),
+      "data/assets/demo.png.annot.json": JSON.stringify(docScene),
+    };
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (url, options = {}) => {
+      if (String(url) === "/api/file/getFile") {
+        const {path: filePath} = JSON.parse(options.body);
+        const data = docFiles[filePath];
+        return new Response(data ?? "missing", {status: data === undefined ? 404 : 200});
+      }
+      return realFetch(url, options);
+    };
+    const doc = document.createElement("div");
+    doc.className = "protyle-wysiwyg";
+    doc.innerHTML = '<div data-node-id="doc-block-1" data-type="NodeParagraph">' +
+      '<span contenteditable="false" data-type="img" class="img"><span> </span>' +
+      '<span><img src="' + window.__imageUrl + '" data-src="assets/demo.png" style="width:300px;height:200px"></span>' +
+      '<span> </span></span></div>';
+    document.body.append(doc);
+
+    window.__ready = true;
+  } catch (e) {
+    window.__error = String(e && e.stack || e);
+  }
+})();
+</script>
+</body>
+</html>

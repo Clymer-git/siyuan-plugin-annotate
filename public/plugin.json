@@ -1,0 +1,47 @@
+{
+  "name": "siyuan-plugin-annotate",
+  "author": "Clymer-git",
+  "url": "https://github.com/Clymer-git/siyuan-plugin-annotate",
+  "version": "0.26.11",
+  "minAppVersion": "3.0.12",
+  "kernels": [
+    "all"
+  ],
+  "backends": [
+    "all"
+  ],
+  "frontends": [
+    "desktop",
+    "desktop-window",
+    "mobile"
+  ],
+  "disabledInPublish": true,
+  "displayName": {
+    "default": "勾画阁·猫抓",
+    "zh-CN": "勾画阁·猫抓",
+    "en": "勾画阁·猫抓"
+  },
+  "description": {
+    "default": "在思源笔记里给图片画箭头、序号、文字、形状、马赛克与模糊，还能旋转、翻转、裁剪；保存后覆盖原图，一张 PNG 既是成品也是可继续编辑的工程，不产生多余资源。",
+    "zh-CN": "在思源笔记里给图片画箭头、序号、文字、形状、马赛克与模糊，还能旋转、翻转、裁剪；保存后覆盖原图，一张 PNG 既是成品也是可继续编辑的工程，不产生多余资源。",
+    "en": "Annotate and crop images right inside SiYuan — saving overwrites the same PNG with the artwork and editable data embedded, so the image stays re-editable and no extra assets pile up."
+  },
+  "icon": "icon.png",
+  "preview": "preview.png",
+  "readme": {
+    "default": "README.md",
+    "zh-CN": "README.md"
+  },
+  "keywords": [
+    "图片",
+    "标注",
+    "箭头",
+    "马赛克",
+    "裁剪",
+    "annotate",
+    "image",
+    "png",
+    "annotation",
+    "crop"
+  ]
+}

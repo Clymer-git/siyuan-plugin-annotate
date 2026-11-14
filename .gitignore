@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+dist/
+_tools/
+*.log
+
+# 交付与内部资料（截图、测试清单体积大，走 Release 附件）
+deliverables/
+.workbuddy/
+*.zip
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
