@@ -65,6 +65,10 @@ export interface CurrentStyle {
     magnifierShape: "rect" | "ellipse";
     /** 矩形圆角半径（画布像素），与 ShareX 的 CornerRadius 同义 */
     cornerRadius: number;
+    /** 高亮工具的模式：自由涂抹 / 拖出矩形色块（会记进预设，下次打开还是上次选的） */
+    highlightMode: "brush" | "rect";
+    /** 马赛克 / 模糊的「选区识别」开关：开着时框选完自动贴合主体轮廓 */
+    smartSelect: boolean;
     /** 文字描边（只对文字生效，不在四组预设里，跟随属性面板最后一次调整） */
     textStrokeEnabled: boolean;
     textStrokeColor: string;
@@ -119,6 +123,8 @@ export const DEFAULT_CURRENT: CurrentStyle = {
     magnifierZoom: 2,
     magnifierShape: "ellipse",
     cornerRadius: 0,
+    highlightMode: "brush",
+    smartSelect: false,
     textStrokeEnabled: true,
     textStrokeColor: "#FFFFFF",
     textStrokeWidth: 2,
@@ -253,6 +259,10 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
             magnifierShape: parsed.magnifierShape === "rect" || parsed.magnifierShape === "ellipse"
                 ? parsed.magnifierShape : base.magnifierShape,
             cornerRadius: number(parsed.cornerRadius, base.cornerRadius, 0, 80),
+            highlightMode: parsed.highlightMode === "rect" ? "rect" : base.highlightMode,
+            // 选区识别是「一次性动作」：每次打开编辑器都从关闭开始，
+            // 免得出现「按钮亮着、但画面里没有框」的困惑
+            smartSelect: false,
             textStrokeEnabled: parsed.textStrokeEnabled !== false,
             textStrokeColor: strokeColor,
             textStrokeWidth: number(parsed.textStrokeWidth, base.textStrokeWidth, 0, 10),
@@ -285,6 +295,8 @@ export function saveCurrentStyle(style: CurrentStyle): void {
             magnifierZoom: style.magnifierZoom,
             magnifierShape: style.magnifierShape,
             cornerRadius: style.cornerRadius,
+            highlightMode: style.highlightMode,
+            smartSelect: style.smartSelect,
             textStrokeEnabled: style.textStrokeEnabled,
             textStrokeColor: style.textStrokeColor,
             textStrokeWidth: style.textStrokeWidth,

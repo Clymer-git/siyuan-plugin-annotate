@@ -629,7 +629,7 @@ check("线型里的「中心线」按「长划—点—长划」四段节奏渲�
     js.includes('key: "dashdot", label: "中心线"') &&
     js.includes('dash === "dashdot"') &&
     /Math\.max\(0\.01, lineWidth \* 0\.01\)/.test(js) &&
-    /style\.lineDashGap\)\s*!=\s*null\s*\?\s*_i\s*:\s*6/.test(js));
+    /style\.lineDashGap\)\s*!=\s*null\s*\?\s*\w+\s*:\s*6/.test(js));
 check("点划线的「点」用圆头画出来（方头会让点消失）",
     js.includes('dash === "dotted" || dash === "dashdot" ? "round" : "butt"') ||
     /dash === "dotted" \|\| dash === "dashdot"[\s\S]{0,60}?"round"/.test(js));
@@ -882,7 +882,7 @@ check("Shift 在拖拽中途按下 / 松开也能实时切换（监听 keydown +
 check("箭头拖拽支持 Shift：与画线同一套 snapDirection（水平 / 垂直 / 45°）",
     /a\.end = shift \? snapDirection\(a\.start, current\) : \{ \.\.\.current \}/.test(js));
 check("矩形 / 聚光灯拖拽支持 Shift：宽高取同一值（正方形 / 正圆洞口）",
-    /case "rect":\s*case "spotlight": \{\s*const r = g;\s*if \(shift\) \{\s*const side = Math\.max\(Math\.abs\(current\.x - start\.x\), Math\.abs\(current\.y - start\.y\)\)/.test(js) &&
+    /case "rect":[\s\S]{0,60}?case "spotlight": \{\s*const r = g;\s*if \(shift\) \{\s*const side = Math\.max\(Math\.abs\(current\.x - start\.x\), Math\.abs\(current\.y - start\.y\)\)/.test(js) &&
     /r\.x = current\.x < start\.x \? start\.x - side : start\.x;[\s\S]{0,200}?r\.width = side;[\s\S]{0,40}?r\.height = side;/.test(js));
 check("椭圆拖拽支持 Shift：rx = ry（以按下点为一个角的正圆）",
     /e\.cx = start\.x \+ dx \/ 2;[\s\S]{0,80}?e\.rx = Math\.abs\(dx\) \/ 2;[\s\S]{0,60}?e\.ry = Math\.abs\(dy\) \/ 2;/.test(js) &&
@@ -1041,6 +1041,9 @@ check("多选状态下拖其中一个成员，整组一起挪（选择也不会�
 // ---------------------------------------------------------------- v0.22.0：移动端圆钮 + 停顿矫正
 const srcEditor2 = await readFile(path.join(root, "src/editor/AnnotEditor.ts"), "utf8");
 const srcShapes2 = await readFile(path.join(root, "src/editor/shapes.ts"), "utf8");
+const srcSmart = await readFile(path.join(root, "src/editor/smartSelect.ts"), "utf8");
+const srcPresetsFile = await readFile(path.join(root, "src/editor/presets.ts"), "utf8");
+const srcSmartWorker = await readFile(path.join(root, "src/editor/smartWorker.ts"), "utf8");
 check("移动端两颗独立圆钮：左选择、右对齐，圆形、48px，无平移",
     js.includes("annot-mobile-fabs") && js.includes('"mobile-select"') &&
     js.includes("annot-fab annot-fab--align") &&
@@ -1063,7 +1066,7 @@ check("触屏「停顿自动矫正」：停 300ms 按 Shift 逻辑重算，继�
     /this\.touchSnapped = false;[\s\S]{0,260}?this\.updateDraft\(this\.draft, drag\.start, p, e\.shiftKey \|\| this\.forceShift\)/.test(srcEditor2));
 check("停顿矫正只在移动端、且只对支持约束的工具生效",
     srcEditor2.includes("TOUCH_SNAP_TYPES") &&
-    /\["arrow", "line", "rect", "ellipse", "spotlight", "magnifier"\]/.test(srcEditor2) &&
+    /\["arrow", "line", "rect", "highlightRect", "ellipse", "spotlight", "magnifier"\]/.test(srcEditor2) &&
     /if \(!this\.mobile \|\| !this\.draft \|\| !TOUCH_SNAP_TYPES\.has/.test(srcEditor2));
 check("v0.22.2：两条栏取消底板，变成透明悬浮层（无背景、无边框、无投影）",
     /\.annot-mobile-style \{[^}]*margin: 0 8px 4px/.test(css) &&
@@ -1168,7 +1171,7 @@ check("v0.26.0：约束期间所有 Shift 判定都认 forceShift（画线吸附
     /const next = \(e\.shiftKey \|\| this\.forceShift\) \? snapDirection/.test(srcEditor2));
 
 check("v0.26.0：第二根手指的 pointerdown 仍被拦下，绘制入口只给约束模式放行",
-    /event\.stopPropagation\(\);[\s\S]{0,220}?this\.gestureMode = "pending";/.test(srcEditor2) &&
+    /event\.stopPropagation\(\);[\s\S]{0,320}?this\.gestureMode = "pending";/.test(srcEditor2) &&
     /if \(this\.mobile && this\.gestureMode !== "constrain" &&/.test(srcEditor2) &&
     /this\.touchPoints\.clear\(\);\s*\n\s*this\.finishGesture\(\);/.test(srcEditor2));
 
@@ -1254,6 +1257,118 @@ check("v0.26.5：手柄尺寸相对界面固定——zoom 一变就同步按新�
     // 尺寸基准：PC 18px / 手机 25px 直径
     srcShapes2.includes("radius: 9, hitRadius: 17") &&
     srcEditor2.includes("{radius: 8, hitRadius: 23}"));
+
+// ---------------------------------------------------------------- v1.1.0 高亮模式
+check("v1.1.0：高亮工具统一改名「高亮」（左栏与手机工具栏共用同一份文案）",
+    js.includes('tool: "highlight", label: "高亮"') &&
+    !js.includes('label: "高亮笔"') &&
+    srcTypes.includes('highlight: "高亮"') &&
+    srcTypes.includes('highlightRect: "矩形高亮"'));
+
+check("v1.1.0：高亮两种模式，PC 悬浮条与手机顶栏都能切",
+    /const HIGHLIGHT_MODES: \{key: "brush" \| "rect"/.test(srcEditor2) &&
+    srcEditor2.includes('data-action="highlight-mode"') &&
+    // 手机端不再是折叠气泡，而是两颗并排按钮（v1.1.0-alpha.3）
+    srcEditor2.includes('action: "highlight-mode-brush"') &&
+    srcEditor2.includes('action: "highlight-mode-rect"') &&
+    srcEditor2.includes("private setHighlightMode("));
+
+check("v1.1.0：矩形高亮画出来是一块半透明色块，不画描边",
+    /case "highlightRect": \{[\s\S]{0,700}?stroke: "none"/.test(srcShapes2) &&
+    /withAlpha\(object\.style\.color, alpha\)/.test(srcShapes2) &&
+    /const alpha = object\.style\.fillOpacity \?\? 0\.5;/.test(srcShapes2));
+
+check("v1.1.0：矩形高亮是独立对象——包围盒 / 平移 / 缩放都按矩形处理，且不参与旋转",
+    (srcShapes2.match(/case "highlightRect":/g) || []).length >= 4 &&
+    /export function supportsRotation[\s\S]{0,260}?object\.type !== "highlightRect"/.test(srcShapes2) &&
+    js.includes("highlightRect"));
+
+check("v1.1.0：矩形高亮默认浓度兜底 50%，切换模式时也补一次（避免画出全透明）",
+    /current\.fillOpacity > 0 \? current\.fillOpacity : 0\.5/.test(srcShapes2) &&
+    /mode === "rect" && this\.current\.fillOpacity <= 0/.test(srcEditor2));
+
+check("v1.1.0：手机端上栏对矩形高亮只给「颜色 + 填充浓度」两组",
+    /case "highlightRect": return \["colors", "fills"\]/.test(srcEditor2) &&
+    /case "highlight":\s*\/\/ 矩形高亮只认/.test(srcEditor2));
+
+check("v1.1.0-alpha.3：手机高亮直接平铺「画笔 / 矩形」两枚按钮，不用再点开气泡",
+    /label: "画笔"/.test(srcEditor2) &&
+    /label: "矩形",\s*icon: TB_SHAPE_RECT,\s*on: mode === "rect"/.test(srcEditor2) &&
+    !srcEditor2.includes('key: "highlightMode"'));
+
+check("v1.1.0-alpha.3：PC 马赛克悬浮条只剩「块大小」，透明度滑块已移除",
+    /type === "mosaic"\) \{[\s\S]{0,320}?range\("blockSize", "块大小", 4, 48, size\)/.test(srcEditor2) &&
+    !/range\("blockSize"[\s\S]{0,200}?range\("opacity"/.test(srcEditor2));
+
+check("v1.1.0-alpha.3：手机马赛克 / 模糊给出紧凑滑块（块大小、模糊程度）",
+    /case "mosaic": return \["blockSize"\]/.test(srcEditor2) &&
+    /case "blur": return \["blurRadius"\]/.test(srcEditor2) &&
+    srcEditor2.includes('class="annot-mobile-range"') &&
+    /\.annot-mobile-range \{[^}]*width: 96px/.test(css));
+
+check("v1.1.0-alpha.4：选区识别的开关同时出现在 PC 与手机的悬浮栏",
+    srcEditor2.includes('data-action="smart-select"') &&
+    srcEditor2.includes('label: "识别"') &&
+    srcEditor2.includes("private toggleSmartSelect("));
+
+check("v1.1.0-alpha.7：点【选区识别】先扫整幅画面，切出一个个独立矩形",
+    srcSmart.includes("export function detectRegions") &&
+    srcSmart.includes("MAX_REGIONS = 120") &&
+    srcEditor2.includes("private scanSmartRegions(") &&
+    srcEditor2.includes("this.smartRegions = (regions ?? [])"));
+
+check("v1.1.0-alpha.7：分区够细靠三件事——局部对比、去长线、图标单独成块",
+    srcSmart.includes("EDGE_THRESHOLD") &&
+    srcSmart.includes("function openLine(") &&
+    srcSmart.includes("ch < charHeight * 2") &&
+    srcSmart.includes("ratio < 0.55 || ratio > 1.8"));
+
+check("v1.1.0-alpha.6：识别跑在 Web Worker 里，画面先降到 800px，主线程只等坐标",
+    srcEditor2.includes('from "./smartWorker?worker&inline"') &&
+    /worker\.postMessage\(\{id: token, data: source\.data, width: source\.width, height: source\.height\}\)/.test(srcEditor2) &&
+    /SMART_MAX_SIDE \/ Math\.max\(canvas\.width, canvas\.height\)/.test(srcEditor2) &&
+    srcSmart.includes("SMART_MAX_SIDE = 800") &&
+    srcSmartWorker.includes("detectRegions"));
+
+check("v1.1.0-alpha.6：虚线框画在 overlay 上，点哪个框就把哪个打码、框随即消失",
+    srcEditor2.includes('"data-smart-region": String(index)') &&
+    srcEditor2.includes('class: "annot-smart-region"') &&
+    /closest\?\.\("\[data-smart-region\]"\)/.test(srcEditor2) &&
+    srcEditor2.includes("this.smartRegions?.splice(index, 1)") &&
+    css.includes(".annot-smart-region") &&
+    /\.annot-smart-region \{[^}]*stroke-dasharray/.test(css));
+
+check("v1.1.0-alpha.6：再点一次按钮退出识别模式，清掉所有没点的框",
+    /if \(this\.current\.smartSelect\) \{\s*this\.exitSmartMode\(\);/.test(srcEditor2) &&
+    /private exitSmartMode\(\): void \{[\s\S]{0,220}?this\.smartRegions = null/.test(srcEditor2) &&
+    /this\.current\.smartSelect && tool !== "mosaic" && tool !== "blur"/.test(srcEditor2));
+
+check("v1.1.0-alpha.6：Worker 建不出来时退回主线程算（CSP 严格的内核也能用）",
+    /worker\.postMessage\(\{id: token[\s\S]{0,400}?finish\(detectRegions\(/.test(srcEditor2) &&
+    srcEditor2.includes("smartWorkerBroken"));
+
+check("v1.1.0-alpha.6：旧版本带 mask 的马赛克仍按形状裁剪（向后兼容）",
+    srcTypes.includes("mask?: SmartRun[]") &&
+    srcShapes2.includes("const runs = m.mask;") &&
+    /annot-mask-[\s\S]{0,600}?clip-path/.test(srcShapes2));
+
+check("v1.1.0-alpha.8：选区识别用完自动关闭（点完最后一个框 / 一个块都没扫出）",
+    /this\.smartRegions\?\.splice\(index, 1\);[\s\S]{0,300}?if \(!this\.smartRegions\?\.length\) \{[\s\S]{0,90}?this\.exitSmartMode\(\);/.test(srcEditor2) &&
+    /if \(!this\.smartRegions\.length\) \{[\s\S]{0,90}?this\.exitSmartMode\(\);/.test(srcEditor2));
+
+check("v1.1.0-alpha.8：识别开关不跨会话保持，重开编辑器一律从关闭开始",
+    srcPresetsFile.includes("smartSelect: false"));
+
+check("v1.1.0-alpha.9：识别单击先延时 180ms，第二根手指落下立刻作废",
+    srcEditor2.includes("private beginSmartTap(") &&
+    /}, 180\);/.test(srcEditor2) &&
+    /this\.touchPoints\.size === 2\) \{[\s\S]{0,120}?this\.cancelSmartTap\(\);/.test(srcEditor2));
+
+check("v1.1.0-alpha.9：位移超过 8px 不算点击，手势结束后 200ms 内不响应",
+    /Math\.hypot\(event\.clientX - client\.x, event\.clientY - client\.y\) > 8/.test(srcEditor2) &&
+    /this\.smartCooldownUntil = performance\.now\(\) \+ 200;/.test(srcEditor2) &&
+    /if \(performance\.now\(\) < this\.smartCooldownUntil\) return;/.test(srcEditor2) &&
+    /distance\(this\.toImagePoint\(e\), tap\.start\) \* this\.viewport\.zoom < 8/.test(srcEditor2));
 
 // ---------------------------------------------------------------- 报告
 console.log(`\n=== 校验目标：${target} ===\n`);

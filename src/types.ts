@@ -2,6 +2,9 @@
 export type ArrowStyleKey =
     "classic" | "modern" | "double" | "basic" | "line" | "bar" | "barDouble";
 
+/** 选区识别得到的贴合形状：0..1 归一化水平条带（见 editor/smartSelect.ts） */
+import type {SmartRun} from "./editor/smartSelect";
+
 /**
  * 标注数据模型（五个里程碑共用）。
  *
@@ -36,7 +39,12 @@ export type ToolType =
     | "spotlight"
     | "magnifier";
 
-export type AnnotType = Exclude<ToolType, "select" | "pan">;
+/**
+ * 画布上真实存在的对象类型。
+ * 「矩形高亮」不是独立工具：它是【高亮】工具的矩形模式产出的对象，
+ * 所以只出现在对象类型里，不出现在工具栏里。
+ */
+export type AnnotType = Exclude<ToolType, "select" | "pan"> | "highlightRect";
 
 export interface Point {
     x: number;
@@ -93,6 +101,8 @@ export interface NumberGeometry {
 /** 马赛克：矩形区域 + 块大小，像素内容在渲染时从底图实时采样 */
 export interface MosaicGeometry extends RectGeometry {
     blockSize: number;
+    /** 选区识别得到的贴合形状；没有这个字段就是整块矩形 */
+    mask?: SmartRun[];
 }
 
 /**
@@ -102,6 +112,8 @@ export interface MosaicGeometry extends RectGeometry {
  */
 export interface BlurGeometry extends RectGeometry {
     radius: number;
+    /** 选区识别得到的贴合形状；没有这个字段就是整块矩形 */
+    mask?: SmartRun[];
 }
 
 /**
@@ -322,7 +334,8 @@ export const TYPE_LABELS: Record<AnnotType, string> = {
     number: "序号",
     mosaic: "马赛克",
     blur: "模糊",
-    highlight: "高亮笔",
+    highlight: "高亮",
+    highlightRect: "矩形高亮",
     line: "画线",
     spotlight: "聚光灯",
     magnifier: "放大镜",

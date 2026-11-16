@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-annotate",
   "author": "Clymer-git",
   "url": "https://github.com/Clymer-git/siyuan-plugin-annotate",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "3.0.12",
   "kernels": [
     "all"

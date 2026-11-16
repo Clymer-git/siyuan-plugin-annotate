@@ -2817,6 +2817,63 @@ html.annot-fs .b3-dialog__close {
   margin-right: 0;
 }
 
+/* 马赛克块大小 / 模糊程度：手机上的紧凑滑块（v1.1.0-alpha.3）
+   上栏只有 50px 高、390px 宽，滑块压到 96px，读数跟在右边不换行 */
+.annot-mobile-style__group--slider {
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.annot-mobile-range {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 20px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+.annot-mobile-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 26%, transparent);
+}
+
+.annot-mobile-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid var(--annot-panel);
+  border-radius: 50%;
+  background: var(--annot-accent);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .22);
+}
+
+.annot-mobile-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 26%, transparent);
+}
+
+.annot-mobile-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--annot-panel);
+  border-radius: 50%;
+  background: var(--annot-accent);
+}
+
+.annot-mobile-range__value {
+  min-width: 20px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--annot-text);
+  opacity: .8;
+}
+
 /* 框内按钮：去掉自带的小毛玻璃底，选中态用主色浅底 */
 .annot-mobile-style__group .annot-mobile-chip {
   min-width: 34px;
@@ -3013,6 +3070,9 @@ html.annot-fs .b3-dialog__close {
 
 .annot-mobile-topbar__btn.is-on {
   color: var(--annot-accent);
+  /* 两枚模式按钮并排时只换字色不够明显，补一层浅底 + 加粗 */
+  background: var(--annot-accent-soft);
+  font-weight: 600;
 }
 
 /* 气泡：相对整条栏水平居中（栏本身居中于屏幕），宽度固定 220 */
@@ -3821,6 +3881,29 @@ html.annot-fs .b3-dialog__close {
   pointer-events: none;
   vector-effect: non-scaling-stroke;
   filter: drop-shadow(0 0 2px var(--annot-accent-soft));
+}
+
+/* 选区识别的预分区虚线框（v1.1.0-alpha.6）：点一下就把这一块打码 */
+.annot-smart-region {
+  fill: color-mix(in srgb, var(--annot-accent) 8%, transparent);
+  stroke: var(--annot-accent);
+  stroke-width: 1.4;
+  stroke-dasharray: 5 4;
+  cursor: pointer;
+  pointer-events: all;
+  vector-effect: non-scaling-stroke;
+  transition: fill .12s ease, stroke-width .12s ease;
+}
+
+.annot-smart-region:hover {
+  fill: color-mix(in srgb, var(--annot-accent) 20%, transparent);
+  stroke-width: 2.4;
+}
+
+.annot-smart-scanning {
+  fill: var(--annot-accent);
+  font-weight: 600;
+  letter-spacing: .08em;
 }
 
 

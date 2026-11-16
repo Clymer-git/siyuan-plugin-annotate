@@ -218,6 +218,7 @@ function moveCenter(object: AnnotObject, mapPoint: (p: Point) => Point): void {
     const dy = next.y - center.y;
     switch (object.type) {
         case "rect":
+        case "highlightRect":
         case "mosaic":
         case "blur": {
             const r = object.geometry as RectGeometry;
@@ -296,7 +297,8 @@ export function remapObjects(
         // 对象自身的旋转角：平移不受影响，旋转/翻转要跟着改
         const geometry = object.geometry as {rotation?: number};
         if (object.type !== "arrow" && object.type !== "number" &&
-            object.type !== "highlight" && object.type !== "line") {
+            object.type !== "highlight" && object.type !== "highlightRect" &&
+            object.type !== "line") {
             const current = geometry.rotation ?? 0;
             if (negateRotation) geometry.rotation = normalizeAngle(-current);
             else if (angleDelta) geometry.rotation = normalizeAngle(current + angleDelta);

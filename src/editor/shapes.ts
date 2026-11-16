@@ -52,7 +52,9 @@ export const DEFAULT_TEXT_STROKE_COLOR = "#FFFFFF";
 export const DEFAULT_TEXT_STROKE_WIDTH = 2;
 
 export function supportsRotation(object: AnnotObject): boolean {
-    return !NO_ROTATION.includes(object.type) && object.type !== "number" && object.type !== "highlight";
+    // 矩形高亮是一块纯色区域，转它没有意义（还会让包围盒手柄对不上），一并排除
+    return !NO_ROTATION.includes(object.type) && object.type !== "number" &&
+        object.type !== "highlight" && object.type !== "highlightRect";
 }
 
 export function getRotation(object: AnnotObject): number {
@@ -75,6 +77,7 @@ export function getBounds(object: AnnotObject): Bounds {
     const g = object.geometry;
     switch (object.type) {
         case "rect":
+        case "highlightRect":
         case "mosaic":
         case "blur":
         case "spotlight":
@@ -143,6 +146,7 @@ export function translateObject(object: AnnotObject, dx: number, dy: number): vo
     const g = object.geometry;
     switch (object.type) {
         case "rect":
+        case "highlightRect":
         case "mosaic":
         case "blur":
         case "spotlight": {
@@ -208,6 +212,7 @@ export function scaleObjectToBounds(object: AnnotObject, from: Bounds, to: Bound
     const g = object.geometry;
     switch (object.type) {
         case "rect":
+        case "highlightRect":
         case "mosaic":
         case "blur":
         case "spotlight":
@@ -296,6 +301,24 @@ function fillFor(object: AnnotObject): string {
     if (fill <= 0) return "none";
     // 填充色可与描边色不同；老对象没存 fillColor 时仍然跟描边色，外观不变
     return withAlpha(object.style.fillColor ?? object.style.color, fill);
+}
+
+/**
+ * 选区识别的条带 → SVG 路径。
+ * 条带是 0..1 归一化的，乘当前 bbox 就回到画布坐标；多段子路径一起交给 clipPath，
+ * 因此「文字有多行、主体分成几块」都能如实裁出来，缩放 / 拖动时也自动跟着走。
+ */
+function maskPath(runs: [number, number, number, number][], m: MosaicGeometry): string {
+    const w = Math.abs(m.width);
+    const h = Math.abs(m.height);
+    return runs.map(([x0, x1, y0, y1]) => {
+        const x = m.x + x0 * w;
+        const y = m.y + y0 * h;
+        const rw = Math.max(0.5, (x1 - x0) * w);
+        const rh = Math.max(0.5, (y1 - y0) * h);
+        return `M${x.toFixed(2)} ${y.toFixed(2)}H${(x + rw).toFixed(2)}` +
+            `V${(y + rh).toFixed(2)}H${x.toFixed(2)}Z`;
+    }).join("");
 }
 
 function highlightPath(points: Point[]): string {
@@ -452,6 +475,20 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
             }));
             break;
         }
+        case "highlightRect": {
+            // 矩形高亮：只有一块半透明色，不画描边（用户要求「不需要描边线条」）。
+            // 颜色直接取顶栏「颜色」组，浓度取「填充」组 —— 两个控件不会互相打架。
+            const r = object.geometry as RectGeometry;
+            group.append(hitRect(bounds, zoom));
+            const alpha = object.style.fillOpacity ?? 0.5;
+            visuals.push(svgEl("rect", {
+                x: r.x, y: r.y, width: Math.abs(r.width), height: Math.abs(r.height),
+                fill: alpha > 0 ? withAlpha(object.style.color, alpha) : "none",
+                stroke: "none",
+                "pointer-events": "none", class: "annot-shape",
+            }));
+            break;
+        }
         case "ellipse": {
             const e = object.geometry as EllipseGeometry;
             group.append(hitRect(bounds, zoom));
@@ -534,19 +571,33 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
         case "blur": {
             const m = object.geometry as MosaicGeometry;
             group.append(hitRect(bounds, zoom));
+            // 选区识别过的对象带 mask：把整块矩形位图裁成贴合主体的形状。
+            // 位图本身仍是整框（采样逻辑不变），所以性能与以前一样，只是多一层裁剪。
+            const runs = m.mask;
+            let clipId = "";
+            if (runs?.length) {
+                clipId = `annot-mask-${object.id}`;
+                const clip = svgEl("clipPath", {id: clipId});
+                clip.append(svgEl("path", {d: maskPath(runs, m)}));
+                group.append(clip);
+            }
             if (options.bitmapUrl) {
-                visuals.push(svgEl("image", {
+                const image = svgEl("image", {
                     href: options.bitmapUrl, x: m.x, y: m.y,
                     width: Math.abs(m.width), height: Math.abs(m.height),
                     preserveAspectRatio: "none", "pointer-events": "none", class: "annot-shape",
-                }));
+                });
+                if (clipId) image.setAttribute("clip-path", `url(#${clipId})`);
+                visuals.push(image);
             } else {
                 // Canvas / filter 不可用（例如跨域底图）时的兜底：半透明雾块
-                visuals.push(svgEl("rect", {
+                const fog = svgEl("rect", {
                     x: m.x, y: m.y, width: Math.abs(m.width), height: Math.abs(m.height),
                     fill: object.type === "blur" ? "rgba(255, 255, 255, .45)" : "rgba(127, 127, 127, .62)",
                     "pointer-events": "none", class: "annot-shape",
-                }));
+                });
+                if (clipId) fog.setAttribute("clip-path", `url(#${clipId})`);
+                visuals.push(fog);
             }
             // 不画描边：马赛克 / 模糊就是把这块打糊，外面套一圈彩色边框看着像贴了个框，
             // 用户明确要求去掉；选中时的虚线框在 overlay 层，仍然能看出范围
@@ -947,15 +998,21 @@ export function renderHandles(
  * 这样「调过一次线宽之后继续画」不会又回到默认最细。
  */
 export function defaultStyle(type: AnnotType, current: CurrentStyle) {
-    const shape = type === "rect" || type === "ellipse";
+    const highlightRect = type === "highlightRect";
+    const shape = type === "rect" || type === "ellipse" || highlightRect;
+    // 矩形高亮的「浓度」直接复用填充不透明度；当前填充是 0% 时兜底 50%，
+    // 否则刚画出来会是一块全透明，看着像「什么都没发生」
+    const fill = highlightRect
+        ? (current.fillOpacity > 0 ? current.fillOpacity : 0.5)
+        : (shape ? current.fillOpacity : 0);
     const style = {
         color: current.color,
         lineWidth: current.lineWidth,
         opacity: type === "highlight" ? 0.35 : 1,
         fontSize: current.fontSize,
-        fillOpacity: shape ? current.fillOpacity : 0,
+        fillOpacity: fill,
         fillColor: shape ? current.fillColor : undefined,
-        fillMode: (shape && current.fillOpacity > 0 ? "translucent" : "none") as "none" | "solid" | "translucent",
+        fillMode: (shape && fill > 0 ? "translucent" : "none") as "none" | "solid" | "translucent",
         lineDash: current.lineDash,
         lineDashGap: current.lineDashGap,
         arrowStyle: current.arrowStyle,

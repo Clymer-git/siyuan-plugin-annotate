@@ -54,8 +54,10 @@ import type {ArrowStyleKey} from "../types";
 import {fitTransform, computeZoomTransform} from "./viewport";
 import {
     applyMatrix, createCanvas, cropWindowOf, extendCanvas, flipCanvas,
-    invert, remapObjects, rotateCanvas, toMatrixString,
+    invert, mapRect, remapObjects, rotateCanvas, toMatrixString,
 } from "./canvas";
+import {detectRegions, SMART_MAX_SIDE, type SmartRegion, type SmartRun} from "./smartSelect";
+import SmartWorker from "./smartWorker?worker&inline";
 import {
     DEFAULT_EXTEND, EXTEND_DIRS, allDirectionsOn, backgroundForState, firstActiveDir, isDirEditable,
     loadExtendState, marginsForState, hasAnyDirection, saveExtendState, slotColorForState, valueForDir,
@@ -91,7 +93,7 @@ import {
 } from "../platform";
 
 /** 触屏「停顿自动矫正」：适用的都是支持 Shift 约束的那几个工具 */
-const TOUCH_SNAP_TYPES = new Set<string>(["arrow", "line", "rect", "ellipse", "spotlight", "magnifier"]);
+const TOUCH_SNAP_TYPES = new Set<string>(["arrow", "line", "rect", "highlightRect", "ellipse", "spotlight", "magnifier"]);
 /** 手指停住多久算「停顿」 */
 const TOUCH_HOLD_MS = 300;
 /** 停顿后手指抖动多少屏幕像素以内仍保持吸附 */
@@ -157,6 +159,12 @@ const ARROW_STYLES: {key: ArrowStyleKey; label: string; hint: string}[] = [
     {key: "barDouble", label: "竖线双头", hint: "两端竖线加双向箭头"},
 ];
 
+/** 高亮的两种画法：笔迹涂抹 / 拖出矩形色块（两个端共用一个入口） */
+const HIGHLIGHT_MODES: {key: "brush" | "rect"; label: string; hint: string}[] = [
+    {key: "brush", label: "画笔高亮", hint: "按住自由涂抹，留下荧光笔一样的笔迹"},
+    {key: "rect", label: "矩形高亮", hint: "拖出一块半透明色块，画完可以选中、拖动、改大小和颜色"},
+];
+
 /** 每个工具在底栏中间显示的一句话提示 */
 const TOOL_HINTS: Record<ToolType, string> = {
     select: "选择：点对象选中，拖角点缩放，拖顶部菱形旋转",
@@ -168,7 +176,7 @@ const TOOL_HINTS: Record<ToolType, string> = {
     number: "序号：点一下放序号，向外拖可拉出引线",
     mosaic: "马赛克：按住拖出需要遮挡的区域",
     blur: "模糊：按住拖出需要虚化的区域",
-    highlight: "高亮笔：按住自由涂抹，松开结束",
+    highlight: "高亮：按住自由涂抹；切到「矩形高亮」可以拖出一块半透明色块",
     line: "画线：拖一下直线；点一下定起点，再点连折线，双击或 Esc 结束；按 Shift 锁定水平/垂直/45°",
     spotlight: "聚光灯：按住拖出要照亮的一块，四周自动压暗；拖框挪位置，拖角点改大小",
     magnifier: "放大镜：按住拖出显示框；拖小圆点换「看哪儿」，拖框挪位置，连线始终跟着",
@@ -280,6 +288,10 @@ const TB_TIP_ICONS: Record<string, string> = {
 /** 显示框 / 遮罩形状 */
 const TB_SHAPE_RECT = `${TB_SVG}><rect x="3" y="3" width="18" height="10" rx="2" stroke="currentColor" stroke-width="2"/></svg>`;
 const TB_SHAPE_ELLIPSE = `${TB_SVG}><ellipse cx="12" cy="8" rx="9" ry="5" stroke="currentColor" stroke-width="2"/></svg>`;
+/** 高亮「画笔」模式：两道平行斜杠，接近荧光笔涂抹出来的痕迹 */
+const TB_BRUSH = `${TB_SVG}><path d="M3.6 12.6 11.4 4.8M7.2 14.4 15 6.6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>`;
+/** 选区识别：虚线框 + 一条贴合内容的横线 */
+const TB_SMART = `${TB_SVG}><rect x="3" y="3" width="18" height="10" rx="2" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2"/><path d="M9 8h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 /** 遮罩颜色：左半黑 / 左半白 */
 const TB_MASK_BLACK = `${TB_SVG}><circle cx="12" cy="8" r="6" stroke="currentColor" stroke-width="1.8"/>`
     + `<path d="M12 2a6 6 0 0 0 0 12Z" fill="currentColor"/></svg>`;
@@ -314,7 +326,7 @@ const TOOL_ITEMS: {tool: ToolType; label: string; key: string}[] = [
     {tool: "number", label: "序号", key: "n"},
     {tool: "mosaic", label: "马赛克", key: "m"},
     {tool: "blur", label: "模糊", key: "b"},
-    {tool: "highlight", label: "高亮笔", key: "l"},
+    {tool: "highlight", label: "高亮", key: "l"},
     {tool: "spotlight", label: "聚光灯", key: "p"},
     {tool: "magnifier", label: "放大镜", key: "g"},
 ];
@@ -346,6 +358,28 @@ export class AnnotEditor {
     private stageH = 0;
     private transformLayer: HTMLElement | null = null;
     private baseImage: HTMLImageElement | null = null;
+    /** 选区识别：Worker（懒创建，创建失败就退回主线程，不影响使用） */
+    private smartWorker: Worker | null = null;
+    private smartWorkerBroken = false;
+    private smartJobs = new Map<number, (regions: SmartRegion[] | null) => void>();
+    /** 预识别出来的虚线框（画布坐标）；null 表示当前不在识别模式 */
+    private smartRegions: SmartRegion[] | null = null;
+    private smartScanning = false;
+    /** 每次扫描 / 退出都自增，用来作废迟到的 Worker 结果 */
+    private smartScanToken = 0;
+    /** 识别模式下的待触发单击：延时 180ms，期间第二指落下或位移过大就取消 */
+    private smartTap: {
+        index: number;
+        start: Point;
+        clientX: number;
+        clientY: number;
+        timer: number;
+        onMove: (event: PointerEvent) => void;
+    } | null = null;
+    /** 手势结束后 200ms 内不响应单击识别，防止抬手那一下误触 */
+    private smartCooldownUntil = 0;
+    /** 降采样后的整幅画面，按「底图 + 画布 + 矩阵」缓存；点击识别时直接取 */
+    private smartBuffer: {key: string; data: Uint8ClampedArray; width: number; height: number; scale: number} | null = null;
     private svg: SVGSVGElement | null = null;
     private objectLayer: SVGGElement | null = null;
     private overlayLayer: SVGGElement | null = null;
@@ -694,7 +728,7 @@ export class AnnotEditor {
             <button type="button" class="annot-icon-button" data-canvas-op="${item.op}"
                 title="${item.hint}" aria-label="${item.label}">${item.icon}</button>`).join("");
 
-        // 手机上的工具按钮要带文字标签：只有图标时「马赛克 / 模糊 / 高亮笔」太难分辨
+        // 手机上的工具按钮要带文字标签：只有图标时「马赛克 / 模糊 / 高亮」太难分辨
         const mobileToolButton = (item: {tool: ToolType; label: string}): string => `
             <button type="button" class="annot-mobile-tool" data-tool="${item.tool}"
                 title="${item.label}" aria-label="${item.label}">
@@ -713,7 +747,7 @@ export class AnnotEditor {
             </button>`).join("");
 
         const helpRows = [
-            ["V / A / R / E / K / T / N / M / B / L", "选择 / 箭头 / 矩形 / 椭圆 / 画线 / 文字 / 序号 / 马赛克 / 模糊 / 高亮笔"],
+            ["V / A / R / E / K / T / N / M / B / L", "选择 / 箭头 / 矩形 / 椭圆 / 画线 / 文字 / 序号 / 马赛克 / 模糊 / 高亮"],
             ["画线：双击 / Esc", "结束连续折线；按住 Shift 锁定水平 / 垂直 / 45°"],
             ["Ctrl + Z / Ctrl + Shift + Z", "撤销 / 重做（Ctrl + Y 也可重做，含旋转裁切）"],
             ["Ctrl + S", "保存并退出（写回笔记里的这张图）"],
@@ -1169,6 +1203,13 @@ export class AnnotEditor {
                 this.closeNumberPickers();
                 this.setNumberTip(normalizeNumberTip(button.getAttribute("data-value")));
             }
+            else if (action === "highlight-mode") {
+                this.setHighlightMode(button.getAttribute("data-value") === "rect" ? "rect" : "brush");
+            }
+            // 手机顶栏是两颗并排按钮，各管一个模式
+            else if (action === "highlight-mode-brush") this.setHighlightMode("brush");
+            else if (action === "highlight-mode-rect") this.setHighlightMode("rect");
+            else if (action === "smart-select") this.toggleSmartSelect();
             else if (action === "spotlight-color") {
                 this.setSpotlightColor(button.getAttribute("data-value") === "white" ? "white" : "black");
             }
@@ -1382,6 +1423,8 @@ export class AnnotEditor {
                 event.stopPropagation();
                 event.stopImmediatePropagation?.();
                 if (this.touchPoints.size === 2) {
+                    // 双指缩放优先级最高：这一下还没落地的单击识别直接作废
+                    this.cancelSmartTap();
                     this.gestureMode = "pending";
                     this.gestureLocked = true;
                 } else {
@@ -2009,6 +2052,14 @@ export class AnnotEditor {
         if (tool !== "select") this.alignMode = false;
         // 平移只是挪画面，不改变选择；其余绘制工具会清掉选择
         if (tool !== "select" && tool !== "pan") this.selectedId = null;
+        // 换到别的工具就退出识别模式，免得虚线框一直挂在那
+        if (this.current.smartSelect && tool !== "mosaic" && tool !== "blur") {
+            this.current.smartSelect = false;
+            saveCurrentStyle(this.current);
+            this.smartRegions = null;
+            this.smartScanning = false;
+            this.smartScanToken++;
+        }
         this.drag = null;
         this.draft = null;
         this.resetTouchHold();
@@ -2427,6 +2478,13 @@ export class AnnotEditor {
                     },
                 };
             case "highlight":
+                // 矩形模式拖出来的是「独立对象」而不是笔迹：松手后能选中、拖动、改大小
+                if (this.current.highlightMode === "rect") {
+                    return {
+                        type: "highlightRect",
+                        geometry: {x: start.x, y: start.y, width: 0, height: 0},
+                    };
+                }
                 return {type: tool, geometry: {points: [{...start}]}};
             default:
                 return null;
@@ -2455,8 +2513,9 @@ export class AnnotEditor {
                 break;
             }
             case "rect":
+            case "highlightRect":
             case "spotlight": {
-                // 矩形 / 聚光灯：Shift 锁 1:1 —— 矩形是正方形，聚光灯是正圆（椭圆形状时）
+                // 矩形 / 矩形高亮 / 聚光灯：Shift 锁 1:1 —— 矩形是正方形，聚光灯是正圆（椭圆形状时）
                 const r = g as RectGeometry;
                 if (shift) {
                     const side = Math.max(Math.abs(current.x - start.x), Math.abs(current.y - start.y));
@@ -2543,6 +2602,7 @@ export class AnnotEditor {
                 return total >= 8 / this.viewport.zoom;
             }
             case "rect":
+            case "highlightRect":
             case "spotlight":
             case "magnifier":
             case "mosaic":
@@ -2618,6 +2678,15 @@ export class AnnotEditor {
         const p = this.toImagePoint(e);
 
         const target = e.target as Element | null;
+        // 识别模式下的虚线框：点哪个就把哪个打码，不进入画图流程
+        const regionEl = target?.closest?.("[data-smart-region]") ?? null;
+        if (regionEl && this.smartRegions) {
+            e.preventDefault();
+            this.beginSmartTap(Number(regionEl.getAttribute("data-smart-region")), p, {
+                x: e.clientX, y: e.clientY,
+            });
+            return;
+        }
         const handleEl = target?.closest?.("[data-handle]") ?? null;
         const objectEl = target?.closest?.("[data-object-id]") ?? null;
         // 聚光灯 / 放大镜是「效果类」对象，画完常常要马上挪一挪。
@@ -2977,6 +3046,16 @@ export class AnnotEditor {
             return;
         }
         this.flushPendingDeselect(e);
+        // 识别模式的单击：抬指时才落地；位移过大说明是在平移画布，不打码
+        if (this.smartTap) {
+            const tap = this.smartTap;
+            this.cancelSmartTap();
+            if (distance(this.toImagePoint(e), tap.start) * this.viewport.zoom < 8) {
+                this.applySmartRegion(tap.index);
+            }
+            this.smartCooldownUntil = performance.now() + 200;
+            return;
+        }
         const drag = this.drag;
         if (!drag) return;
         // 先记下手指在末端停了多久：下面 onPointerMove 会把 lastMoveAt 刷新成现在，
@@ -3297,9 +3376,12 @@ export class AnnotEditor {
             case "text": return ["colors", "fonts"];
             // 序号多两组：编号格式、引线端点（手机上也能改，不然默认为罗马数字就再也回不去）
             case "number": return ["colors", "numbers", "fonts"];
-            case "highlight": return ["colors", "fills"];
-            case "mosaic":
-            case "blur": return [];
+            case "highlight":
+            // 矩形高亮只认「颜色 + 填充浓度」两样，粗细 / 线型对它没有意义
+            case "highlightRect": return ["colors", "fills"];
+            // 马赛克 / 模糊：手机上也要能调参数，给一个紧凑滑块（v1.1.0-alpha.3）
+            case "mosaic": return ["blockSize"];
+            case "blur": return ["blurRadius"];
             // 放大镜：镜框颜色 / 线宽有用；聚光灯没有现成的分组可复用，上栏给提示
             case "magnifier": return ["colors", "widths"];
             case "spotlight": return [];
@@ -3378,6 +3460,27 @@ export class AnnotEditor {
                     title="字号 ${size} px" aria-label="字号 ${size} 像素">${size}</button>`).join("");
             parts.push(`<div class="annot-mobile-style__group" data-group="fonts">
                 <span class="annot-mobile-style__label">字号</span>${items}</div>`);
+        }
+        // 马赛克块大小 / 模糊程度：手机屏窄，滑块压到 96px，数值跟在右边
+        if (groups.includes("blockSize") || groups.includes("blurRadius")) {
+            const isBlur = groups.includes("blurRadius");
+            const key = isBlur ? "blurRadius" : "blockSize";
+            const object = this.getObject(this.selectedId);
+            let value = isBlur ? this.contextDefaults.blurRadius : this.contextDefaults.blockSize;
+            if (isBlur && object?.type === "blur") {
+                value = (object.geometry as BlurGeometry).radius ?? value;
+            } else if (!isBlur && object?.type === "mosaic") {
+                value = (object.geometry as MosaicGeometry).blockSize ?? value;
+            }
+            value = Math.round(value);
+            const label = isBlur ? "模糊程度" : "块大小";
+            parts.push(`<div class="annot-mobile-style__group annot-mobile-style__group--slider" data-group="${key}">
+                <span class="annot-mobile-style__label">${label}</span>
+                <input type="range" class="annot-mobile-range" data-ctx="${key}"
+                    min="${isBlur ? 2 : 4}" max="${isBlur ? MAX_BLUR_RADIUS : 48}" value="${value}"
+                    aria-label="${label}">
+                <b class="annot-mobile-range__value" data-role="m-${key}">${value}</b>
+            </div>`);
         }
         if (groups.includes("ratios")) {
             const items = CROP_RATIO_PRESETS.map((item) => `
@@ -3677,6 +3780,8 @@ export class AnnotEditor {
 
     /** 双指手势收尾：状态、锁、强制 Shift 一起复位 */
     private finishGesture(): void {
+        // 手指全离开后短暂冷却：抬手的余波不再被当成「点击识别」
+        this.smartCooldownUntil = performance.now() + 200;
         this.selectionBeforeGesture = null;
         this.gestureMode = "none";
         this.gestureLocked = false;
@@ -3708,9 +3813,10 @@ export class AnnotEditor {
                 ? (object.geometry as NumberGeometry).format : this.current.numberFormat)}/` +
               `${normalizeNumberTip(object?.type === "number" ? object.style.numberTip : this.current.numberTip)}`
             : "";
+        // 带上对象 id：同类对象互相切换时也要重建，否则滑块会停在上一块的数值上
         const key = `${this.cropMode ? "crop" : this.activeTool}|` +
             `${object?.type ?? (this.activeTool === "select" ? "" : this.activeTool)}|` +
-            `${groups.join(",")}|${numberState}`;
+            `${object?.id ?? ""}|${groups.join(",")}|${numberState}`;
         if (key !== this.mobileStyleKey) {
             this.mobileStyleKey = key;
             host.innerHTML = this.buildMobileStyleGroups(groups);
@@ -3739,6 +3845,40 @@ export class AnnotEditor {
         const arrowRound = picked ? style?.arrowRounded !== false : this.current.arrowRounded;
         const lineRound = picked ? style?.lineRound !== false : this.current.lineRound;
         const items: MobileTopItem[] = [];
+        // 高亮只有两种画法，折叠进气泡反而多一次点击：直接并排平铺两个按钮，
+        // 选中哪一个就把哪一个点亮（v1.1.0-alpha.3）
+        if (type === "highlight" || type === "highlightRect") {
+            const mode = this.current.highlightMode === "rect" ? "rect" : "brush";
+            items.push({
+                key: "hlBrush",
+                label: "画笔",
+                icon: TB_BRUSH,
+                on: mode === "brush",
+                action: "highlight-mode-brush",
+                title: "画笔高亮：按住自由涂抹",
+            });
+            items.push({
+                key: "hlRect",
+                label: "矩形",
+                icon: TB_SHAPE_RECT,
+                on: mode === "rect",
+                action: "highlight-mode-rect",
+                title: "矩形高亮：拖出一块半透明色块",
+            });
+        }
+        // 马赛克 / 模糊：一颗「识别」开关，开着时框选完按像素自动贴合主体
+        if (type === "mosaic" || type === "blur") {
+            items.push({
+                key: "smart",
+                label: "识别",
+                icon: TB_SMART,
+                on: this.current.smartSelect,
+                action: "smart-select",
+                title: this.current.smartSelect
+                    ? "选区识别已开启：点一下画面上的文字或物体即可"
+                    : "选区识别：点一下画面上的文字或物体，自动贴合轮廓",
+            });
+        }
         // 「圆线」是纯开关：点一下直接切，不弹气泡（少一次点击）
         const pushRound = (on: boolean, what: "arrow" | "line"): void => {
             items.push({
@@ -3843,6 +3983,12 @@ export class AnnotEditor {
             const active = normalizeArrowStyle(picked?.style.arrowStyle ?? this.current.arrowStyle);
             return ARROW_STYLES.map((item) => cell("arrow-style-pick", item.key,
                 ARROW_STYLE_ICONS[item.key], item.key === active, item.label)).join("");
+        }
+        if (key === "highlightMode") {
+            const mode = this.current.highlightMode === "rect" ? "rect" : "brush";
+            return HIGHLIGHT_MODES.map((item) => cell("highlight-mode", item.key,
+                item.key === "rect" ? TB_SHAPE_RECT : TB_BRUSH,
+                item.key === mode, item.label)).join("");
         }
         if (key === "corner") {
             const radius = normalizeCornerRadius(
@@ -4090,6 +4236,8 @@ export class AnnotEditor {
             this.renderCropOverlay(layer);
             return;
         }
+        // 预识别的虚线框画在最底下，手柄盖在上面
+        this.renderSmartRegions(layer);
         // 保持当前工具时，刚画好的对象也要显示手柄，方便接着调整
         if (this.editingTextId) return;
         const boxes = this.selectedIds
@@ -5516,16 +5664,29 @@ export class AnnotEditor {
             <label class="annot-context__item"><span>${label}</span>
                 <input type="range" data-ctx="${key}" min="${min}" max="${max}" value="${value}">
                 <b data-role="ctx-${key}">${value}${unit}</b></label>`;
+        // 马赛克 / 模糊共用：开着的时候点一下画面，就能自动贴合文字或物体的轮廓
+        const smartChip = `<button type="button" class="annot-context__chip${this.current.smartSelect ? " is-active" : ""}"
+            data-action="smart-select" aria-pressed="${this.current.smartSelect}"
+            title="选区识别：开启后点一下画面上的文字或物体，自动贴合它的轮廓">选区识别</button>`;
         let html = "";
         if (this.activeTool === "pan") {
             // 平移只是挪视线，没有任何参数可调：保持和「选择」一样，只留两颗常驻按钮
             html = "";
+        } else if (type === "highlight" || type === "highlightRect") {
+            // 高亮的两种画法：点一下直接换，不用先选工具再进设置
+            const mode = this.current.highlightMode === "rect" ? "rect" : "brush";
+            html = `<span class="annot-context__title">高亮</span>` +
+                `<div class="annot-context__chips" role="group" aria-label="高亮模式">` +
+                HIGHLIGHT_MODES.map((item) => `
+                    <button type="button" class="annot-context__chip${item.key === mode ? " is-active" : ""}"
+                        data-action="highlight-mode" data-value="${item.key}" title="${item.hint}"
+                        aria-pressed="${item.key === mode}">${item.label}</button>`).join("") +
+                `</div>`;
         } else if (type === "mosaic") {
             const size = selected ? (selected.geometry as MosaicGeometry).blockSize : this.contextDefaults.blockSize;
-            const opacity = selected ? Math.round(selected.style.opacity * 100) : this.contextDefaults.opacity;
+            // 透明度对马赛克意义不大（它本来就是盖住内容），PC 悬浮条只留块大小
             html = `<span class="annot-context__title">马赛克</span>` +
-                range("blockSize", "块大小", 4, 48, size) +
-                range("opacity", "透明度", 10, 100, opacity, "%");
+                range("blockSize", "块大小", 4, 48, size) + smartChip;
         } else if (type === "spotlight") {
             // 暗度 / 遮挡形状：选中谁改谁，没选中就改下一个聚光灯的默认值
             const picked = this.getObject(this.selectedId);
@@ -5576,7 +5737,7 @@ export class AnnotEditor {
             const radius = selected ? Math.round((selected.geometry as BlurGeometry).radius ?? 12)
                 : this.contextDefaults.blurRadius;
             html = `<span class="annot-context__title">模糊</span>` +
-                range("blurRadius", "模糊程度", 2, 40, radius);
+                range("blurRadius", "模糊程度", 2, 40, radius) + smartChip;
         } else if (type === "number") {
             // 编号格式 / 引线端点 / 圆线：都按「选中谁改谁，没选中改默认值」取当前值
             const pickedNumber = this.getObject(this.selectedId);
@@ -5848,6 +6009,230 @@ export class AnnotEditor {
     }
 
     /** 聚光灯遮挡形状：选中就当场换，没选中就改下一个聚光灯的默认值 */
+    /**
+     * 在「画笔高亮」与「矩形高亮」之间切换。
+     * 只影响接下来怎么画，不动已经画好的对象 —— 用户不会因为试一下模式就丢掉刚画的东西。
+     */
+    private setHighlightMode(mode: "brush" | "rect"): void {
+        const changed = this.current.highlightMode !== mode;
+        this.current.highlightMode = mode;
+        // 切到矩形高亮时，如果「填充」当前是 0%（顶栏显示无填充），给一个能看见的默认浓度，
+        // 否则第一次拖出来的会是一块全透明，看起来像没画上
+        if (mode === "rect" && this.current.fillOpacity <= 0) this.current.fillOpacity = 0.5;
+        saveCurrentStyle(this.current);
+        if (changed || mode === "rect") this.render();
+    }
+
+    /**
+     * 选区识别：点一下按钮，先把整张画面切成一个个独立区块（虚线框）；
+     * 用户点哪个框，哪个框就被打码。再点一次按钮退出，清掉所有还没点的框。
+     */
+    private toggleSmartSelect(): void {
+        if (this.current.smartSelect) {
+            this.exitSmartMode();
+            return;
+        }
+        this.current.smartSelect = true;
+        saveCurrentStyle(this.current);
+        this.scanSmartRegions();
+    }
+
+    /** 退出识别模式：清空未点的虚线框（已经打出来的马赛克 / 模糊不受影响） */
+    private exitSmartMode(): void {
+        this.current.smartSelect = false;
+        saveCurrentStyle(this.current);
+        this.smartScanToken++;
+        this.smartRegions = null;
+        this.smartScanning = false;
+        this.render();
+    }
+
+    /** Worker 懒创建；创建失败（CSP / 老内核）就把 broken 置位，之后一律主线程兜底 */
+    private ensureSmartWorker(): Worker | null {
+        if (this.smartWorkerBroken) return null;
+        if (this.smartWorker) return this.smartWorker;
+        try {
+            const worker = new SmartWorker();
+            worker.onmessage = (event: MessageEvent<{id: number; regions: SmartRegion[] | null}>) => {
+                const callback = this.smartJobs.get(event.data.id);
+                this.smartJobs.delete(event.data.id);
+                callback?.(event.data.regions ?? null);
+            };
+            worker.onerror = () => {
+                this.smartWorkerBroken = true;
+            };
+            this.smartWorker = worker;
+            return worker;
+        } catch {
+            this.smartWorkerBroken = true;
+            return null;
+        }
+    }
+
+    /**
+     * 把「当前看到的画面」按矩阵画到一张降采样画布上，供识别使用。
+     *
+     * 画的是**变换后的画面**（旋转 / 翻转 / 裁剪都已经体现在矩阵里），
+     * 所以结果的像素坐标乘一个比例就能当画布坐标用，不需要来回换算。
+     */
+    private smartImageData(): {data: Uint8ClampedArray; width: number; height: number; scale: number} | null {
+        const img = this.baseImage;
+        const canvas = this.scene.canvas;
+        if (!img || !img.naturalWidth || canvas.width < 16 || canvas.height < 16) return null;
+        const key = `${img.currentSrc || img.src}|${canvas.width}x${canvas.height}|${toMatrixString(canvas.matrix)}`;
+        if (this.smartBuffer?.key === key) return this.smartBuffer;
+        const scale = Math.min(1, SMART_MAX_SIDE / Math.max(canvas.width, canvas.height));
+        const width = Math.max(8, Math.round(canvas.width * scale));
+        const height = Math.max(8, Math.round(canvas.height * scale));
+        try {
+            const off = document.createElement("canvas");
+            off.width = width;
+            off.height = height;
+            const ctx = off.getContext("2d", {willReadFrequently: true});
+            if (!ctx) return null;
+            const m = canvas.matrix;
+            ctx.setTransform(scale * m.a, scale * m.b, scale * m.c, scale * m.d, scale * m.e, scale * m.f);
+            ctx.drawImage(img, 0, 0);
+            const pixels = ctx.getImageData(0, 0, width, height);
+            this.smartBuffer = {key, data: pixels.data, width, height, scale};
+            return this.smartBuffer;
+        } catch {
+            // 跨域底图会污染 canvas：识别不可用，退回手动拖框
+            return null;
+        }
+    }
+
+    /** 扫描整幅画面，拿到所有独立区块（Worker 里算，主线程只等结果） */
+    private scanSmartRegions(): void {
+        const source = this.smartImageData();
+        if (!source) {
+            this.exitSmartMode();
+            return;
+        }
+        const token = ++this.smartScanToken;
+        this.smartScanning = true;
+        this.smartRegions = null;
+        this.render();
+        const finish = (regions: SmartRegion[] | null): void => {
+            // 已经退出模式、或者又点了一次按钮：这批结果作废
+            if (token !== this.smartScanToken) return;
+            this.smartScanning = false;
+            const k = this.scene.canvas.width / Math.max(1, source.width);
+            this.smartRegions = (regions ?? []).map((r) => ({
+                x: r.x * k, y: r.y * k, width: r.width * k, height: r.height * k,
+            }));
+            // 一个块都没扫出来：自动退出，别让按钮一直亮着却什么都没有
+            if (!this.smartRegions.length) {
+                this.exitSmartMode();
+                return;
+            }
+            this.render();
+        };
+        const worker = this.ensureSmartWorker();
+        if (worker) {
+            this.smartJobs.set(token, finish);
+            try {
+                worker.postMessage({id: token, data: source.data, width: source.width, height: source.height});
+                return;
+            } catch {
+                this.smartJobs.delete(token);
+                this.smartWorkerBroken = true;
+            }
+        }
+        // 兜底：Worker 不可用就在主线程算（画面已经降采样，通常一两百毫秒）
+        try {
+            finish(detectRegions({data: source.data, width: source.width, height: source.height}));
+        } catch {
+            finish(null);
+        }
+    }
+
+    /**
+     * 识别模式下的「点一下打码」不是按下就执行，而是挂一个 180ms 的延时：
+     * 期间只要出现第二根手指、或手指标明显移动，就立刻取消 —— 保证双指缩放永远优先。
+     */
+    private beginSmartTap(index: number, point: Point, client: {x: number; y: number}): void {
+        this.cancelSmartTap();
+        if (performance.now() < this.smartCooldownUntil) return;
+        const onMove = (event: PointerEvent): void => {
+            if (Math.hypot(event.clientX - client.x, event.clientY - client.y) > 8) {
+                this.cancelSmartTap();
+            }
+        };
+        const timer = window.setTimeout(() => {
+            const tap = this.smartTap;
+            this.smartTap = null;
+            if (!tap) return;
+            window.removeEventListener("pointermove", tap.onMove, {capture: true} as EventListenerOptions);
+            this.applySmartRegion(tap.index);
+        }, 180);
+        this.smartTap = {index, start: {...point}, clientX: client.x, clientY: client.y, timer, onMove};
+        window.addEventListener("pointermove", onMove, {capture: true, passive: true});
+    }
+
+    private cancelSmartTap(): void {
+        if (!this.smartTap) return;
+        window.clearTimeout(this.smartTap.timer);
+        window.removeEventListener("pointermove", this.smartTap.onMove, {capture: true} as EventListenerOptions);
+        this.smartTap = null;
+    }
+
+    /** 点中虚线框：把这一块变成马赛克 / 模糊对象，框随即消失 */
+    private applySmartRegion(index: number): void {
+        const region = this.smartRegions?.[index];
+        const tool = this.activeTool;
+        if (!region || (tool !== "mosaic" && tool !== "blur")) return;
+        const object = tool === "mosaic"
+            ? this.createObject("mosaic", {
+                x: region.x, y: region.y, width: region.width, height: region.height,
+                blockSize: this.contextDefaults.blockSize,
+            })
+            : this.createObject("blur", {
+                x: region.x, y: region.y, width: region.width, height: region.height,
+                radius: this.contextDefaults.blurRadius,
+            });
+        this.scene.objects.push(object);
+        this.smartRegions?.splice(index, 1);
+        this.selectedId = object.id;
+        this.commit();
+        // 点完最后一个框就自动退出识别模式：下次要用重新点按钮，
+        // 不会出现「按钮还亮着、但画面里已经没有框可点」的尴尬状态
+        if (!this.smartRegions?.length) {
+            this.exitSmartMode();
+            return;
+        }
+        this.render();
+    }
+
+    /** overlay 上的虚线框：点一下就是打码；扫描期间显示一行「正在识别…」 */
+    private renderSmartRegions(layer: SVGGElement): void {
+        if (!this.smartRegions && !this.smartScanning) return;
+        const group = svgEl("g", {"data-role": "smart-regions"});
+        for (const [index, region] of (this.smartRegions ?? []).entries()) {
+            group.append(svgEl("rect", {
+                "data-smart-region": String(index),
+                x: region.x, y: region.y,
+                width: Math.max(2, region.width), height: Math.max(2, region.height),
+                rx: Math.min(6, Math.max(2, Math.min(region.width, region.height) * 0.12)),
+                class: "annot-smart-region",
+            }));
+        }
+        if (this.smartScanning) {
+            const vb = this.svg?.viewBox?.baseVal;
+            if (vb && vb.width > 0) {
+                const text = svgEl("text", {
+                    x: vb.x + vb.width / 2, y: vb.y + vb.height / 2,
+                    "text-anchor": "middle", "dominant-baseline": "middle",
+                    "font-size": 15 / (this.viewport.zoom || 1),
+                    class: "annot-smart-scanning", "pointer-events": "none",
+                });
+                text.textContent = "正在识别…";
+                group.append(text);
+            }
+        }
+        layer.append(group);
+    }
+
     private setSpotlightShape(shape: "rect" | "ellipse"): void {
         this.current.spotlightShape = shape;
         saveCurrentStyle(this.current);
@@ -5967,6 +6352,9 @@ export class AnnotEditor {
         }
         const badge = this.root?.querySelector<HTMLElement>(`[data-role="ctx-${key}"]`);
         if (badge) badge.textContent = `${value}${key === "opacity" ? "%" : ""}`;
+        // 手机属性栏的读数（块大小 / 模糊程度）跟 PC 共用同一套 data-ctx，读数单独一份
+        const mobileBadge = this.root?.querySelector<HTMLElement>(`[data-role="m-${key}"]`);
+        if (mobileBadge) mobileBadge.textContent = String(Math.round(value));
         const object = this.getObject(this.selectedId);
         if (!object) return;
         const patch: PropertyPatch = {};
@@ -6877,6 +7265,21 @@ export class AnnotEditor {
         // 不管从哪条路关窗（保存 / 取消 / 思源自己销毁对话框），都把当前样式记下来
         saveCurrentStyle(this.current);
         this.abort.abort();
+        // 关窗时把识别 Worker 收掉：反复开关编辑器不该堆一串后台线程
+        if (this.smartWorker) {
+            try {
+                this.smartWorker.terminate();
+            } catch {
+                // 已经终止过了
+            }
+            this.smartWorker = null;
+        }
+        this.cancelSmartTap();
+        this.smartJobs.clear();
+        this.smartBuffer = null;
+        this.smartRegions = null;
+        this.smartScanning = false;
+        this.smartScanToken++;
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
         this.stopThemeWatch?.();

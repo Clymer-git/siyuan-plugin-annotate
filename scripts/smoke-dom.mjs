@@ -768,9 +768,23 @@ if (process.argv[3] === "--m3") {
 
     // 画布悬浮条：马赛克 / 模糊 / 箭头各显示各的参数
     click('button[data-tool="mosaic"]');
-    check("PC 悬浮条：马赛克显示块大小与透明度",
+    check("PC 悬浮条：马赛克只剩块大小，透明度滑块已移除",
         contextBar()?.hidden === false && !!contextBar()?.querySelector('[data-ctx="blockSize"]') &&
-        !!contextBar()?.querySelector('[data-ctx="opacity"]'));
+        !contextBar()?.querySelector('[data-ctx="opacity"]'));
+    {
+        // 选区识别开关：默认关，点一下进按下态（v1.1.0-alpha.4）
+        const smartBtn = () => contextBar()?.querySelector('[data-action="smart-select"]');
+        check("PC 悬浮条：马赛克有「选区识别」开关，默认未开启",
+            !!smartBtn() && smartBtn().getAttribute("aria-pressed") === "false",
+            String(smartBtn()?.getAttribute("aria-pressed")));
+        smartBtn()?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+        // jsdom 没有 canvas（getContext 返回 null），点下去会走「读不到像素」的兜底并安静退出；
+        // 真机上是进入识别模式、在 overlay 上画出虚线框。这里只确认不抛错、不留脏状态。
+        check("PC 点「选区识别」在无 canvas 环境安静退出，不留虚线框",
+            smartBtn()?.getAttribute("aria-pressed") === "false" &&
+            !win.document.querySelector("[data-smart-region]"),
+            String(smartBtn()?.getAttribute("aria-pressed")));
+    }
     click('button[data-tool="blur"]');
     check("PC 悬浮条：模糊显示模糊程度",
         contextBar()?.hidden === false && !!contextBar()?.querySelector('[data-ctx="blurRadius"]'));
@@ -995,6 +1009,44 @@ if (process.argv[3] === "--m3") {
         (barDoubleGroup?.querySelectorAll("line.annot-bar").length ?? 0) === 2 &&
         (barDoubleGroup?.querySelectorAll("path.annot-head").length ?? 0) === 2,
         `${barDoubleGroup?.querySelectorAll("line.annot-bar").length} 竖线 / ${barDoubleGroup?.querySelectorAll("path.annot-head").length} 箭头`);
+
+    // 6) 高亮：画笔 / 矩形两种模式（v1.1.0）
+    click('button[data-tool="highlight"]');
+    const modeChips = Array.from(win.document.querySelectorAll(
+        '[data-role="context-bar"] [data-action="highlight-mode"]'));
+    check("v1.1.0 选中高亮工具后，悬浮条给出「画笔 / 矩形」两个模式",
+        modeChips.length === 2 && modeChips.some((b) => b.getAttribute("data-value") === "rect"),
+        `模式按钮=${modeChips.length}`);
+    modeChips.find((b) => b.getAttribute("data-value") === "rect")
+        ?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+    const beforeHighlightRect = count();
+    draw("highlight", {x: 1000, y: 60}, {x: 1140, y: 160});
+    const highlightRectGroup = lastGroup();
+    const highlightRectShape = highlightRectGroup?.querySelector("rect.annot-shape");
+    check("v1.1.0 矩形高亮画出来是一块矩形色块，且没有描边",
+        count() === beforeHighlightRect + 1 && !!highlightRectShape &&
+        highlightRectShape.getAttribute("stroke") === "none" &&
+        /^rgba\(/.test(highlightRectShape.getAttribute("fill") || ""),
+        `stroke=${highlightRectShape?.getAttribute("stroke")} fill=${highlightRectShape?.getAttribute("fill")}`);
+    check("v1.1.0 矩形高亮是独立对象：画完自动选中，四角缩放手柄齐全且不带旋转手柄",
+        !!highlightRectGroup?.getAttribute("data-object-id") &&
+        !!win.document.querySelector('[data-handle="resize:nw"]') &&
+        !!win.document.querySelector('[data-handle="resize:se"]') &&
+        !!win.document.querySelector('[data-handle="move"]') &&
+        !win.document.querySelector('[data-handle="rotate"]'),
+        `id=${highlightRectGroup?.getAttribute("data-object-id")}`);
+    // 切回画笔模式，确认两种画法互不干扰
+    click('button[data-tool="highlight"]');
+    Array.from(win.document.querySelectorAll('[data-role="context-bar"] [data-action="highlight-mode"]'))
+        .find((b) => b.getAttribute("data-value") === "brush")
+        ?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+    const beforeBrush = count();
+    draw("highlight", {x: 1000, y: 220}, {x: 1140, y: 300});
+    check("v1.1.0 切回画笔模式后画的仍是笔迹（不是矩形）",
+        count() === beforeBrush + 1 &&
+        !!lastGroup()?.querySelector("path.annot-shape") &&
+        !lastGroup()?.querySelector("rect.annot-shape"),
+        `${count()} 个对象`);
 
     click('[data-action="close"]');
     await tick();
@@ -4488,11 +4540,29 @@ if (process.argv[3] === "--m8") {
 
 
 
-    // 切到马赛克：没有参数，给一句提示
+    // 切到马赛克：上栏给出「块大小」紧凑滑块（v1.1.0-alpha.3）
     click('.annot-mobile-rail button[data-tool="mosaic"]');
-    check("M8 切到马赛克后，上栏只给提示、不摆无用参数",
-        styleGroups().join(",") === "hint" && styleText().includes("拖出"),
+    const mosaicRange = () => q('[data-role="mobile-style"] input[data-ctx="blockSize"]');
+    check("M8 切到马赛克后，上栏出现「块大小」滑块",
+        styleGroups().join(",") === "blockSize" && !!mosaicRange() &&
+        !!q('[data-role="mobile-style"] [data-role="m-blockSize"]'),
         `${styleGroups().join(",")} / ${styleText().slice(0, 24)}`);
+    check("M8 手机端马赛克顶栏有「识别」开关",
+        !!q('[data-role="mobile-topbar"] [data-action="smart-select"]'),
+        String(!!q('[data-role="mobile-topbar"] [data-action="smart-select"]')));
+    if (mosaicRange()) {
+        mosaicRange().value = "30";
+        mosaicRange().dispatchEvent(new win.Event("input", {bubbles: true, cancelable: true}));
+        mosaicRange().dispatchEvent(new win.Event("change", {bubbles: true, cancelable: true}));
+        check("M8 手机上拖动块大小，右侧读数同步为 30",
+            q('[data-role="m-blockSize"]')?.textContent === "30",
+            String(q('[data-role="m-blockSize"]')?.textContent));
+    }
+    click('.annot-mobile-rail button[data-tool="blur"]');
+    check("M8 切到模糊后，上栏出现「模糊程度」滑块",
+        styleGroups().join(",") === "blurRadius" &&
+        !!q('[data-role="mobile-style"] input[data-ctx="blurRadius"]'),
+        styleGroups().join(","));
 
     // 2) 点颜色：真正改到当前样式，并重新高亮
     click('.annot-mobile-rail button[data-tool="arrow"]');
@@ -5048,6 +5118,39 @@ if (process.argv[3] === "--m8") {
     tapAt(900, 700);
     click('.annot-fab[data-action="mobile-select"]');
     check("M8 选择工具且没选对象时整条顶部栏隐藏", topbar()?.hidden === true);
+
+    // 高亮：手机顶栏直接平铺「画笔 / 矩形」两颗按钮（v1.1.0-alpha.3）
+    click('.annot-mobile-rail button[data-tool="highlight"]');
+    const hlButtons = () => Array.from(
+        win.document.querySelectorAll('[data-role="mobile-topbar"] .annot-mobile-topbar__btn'));
+    check("v1.1.0 手机上选中高亮，顶栏直接并排「画笔 / 矩形」两颗按钮（不用点开气泡）",
+        hlButtons().length === 2 &&
+        hlButtons()[0].getAttribute("data-action") === "highlight-mode-brush" &&
+        hlButtons()[1].getAttribute("data-action") === "highlight-mode-rect" &&
+        !win.document.querySelector('[data-role="mobile-pop"]'),
+        hlButtons().map((el) => el.textContent.trim()).join("/"));
+    check("v1.1.0 当前模式（画笔）那颗按钮是高亮态",
+        !!hlButtons()[0]?.classList.contains("is-on") && !hlButtons()[1]?.classList.contains("is-on"));
+    hlButtons()[1]?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+    await tick();
+    check("v1.1.0 点「矩形」后高亮态换到矩形那颗",
+        !!hlButtons()[1]?.classList.contains("is-on") && !hlButtons()[0]?.classList.contains("is-on"));
+    const beforeMobileHighlight = layer()?.querySelectorAll("g.annot-object:not(.is-preview)").length ?? 0;
+    const hlFrom = toClient(120, 520);
+    const hlTo = toClient(320, 620);
+    svg.dispatchEvent(touch("pointerdown", hlFrom.x, hlFrom.y, 61));
+    svg.dispatchEvent(touch("pointermove", (hlFrom.x + hlTo.x) / 2, (hlFrom.y + hlTo.y) / 2, 61));
+    svg.dispatchEvent(touch("pointerup", hlTo.x, hlTo.y, 61));
+    const mobileHighlight = Array.from(
+        layer()?.querySelectorAll("g.annot-object:not(.is-preview)") ?? []).pop();
+    const mobileHighlightShape = mobileHighlight?.querySelector("rect.annot-shape");
+    check("v1.1.0 手机单指拖出矩形高亮（无描边、半透明）",
+        (layer()?.querySelectorAll("g.annot-object:not(.is-preview)").length ?? 0) === beforeMobileHighlight + 1 &&
+        !!mobileHighlightShape && mobileHighlightShape.getAttribute("stroke") === "none" &&
+        /^rgba\(/.test(mobileHighlightShape.getAttribute("fill") || ""),
+        `stroke=${mobileHighlightShape?.getAttribute("stroke")} fill=${mobileHighlightShape?.getAttribute("fill")}`);
+    check("v1.1.0 手机端矩形高亮也能选中并出现缩放手柄",
+        !!win.document.querySelector('[data-handle="resize:se"]'));
 
     click('[data-action="close"]');
     await tick();
