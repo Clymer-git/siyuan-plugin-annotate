@@ -91,6 +91,7 @@
 | **ShareX**（ShareX Team） | https://github.com/ShareX/ShareX | 箭头七种样式的几何比例：头宽、头长、翼角约 35°、曲线主干、折角容许值；矩形圆角的档位与顺序；标注工具的命名与分组逻辑 |
 | **Anot8**（ksprashu） | https://github.com/ksprashu/anot8 | 坐标体系：viewBox 恒定、缩放平移只改 CSS transform、所有坐标以图片原始像素表示；以指针为焦点的缩放算法；色值与对比度算法（含按相对亮度自动选黑白文字） |
 | **Colorink**（yuebai777） | https://github.com/yuebai777/colorink | 色轮的结构与布局：外圈空心色相环、中间内接饱和度 / 明度方块、环上白圈定色相、方块里小圈定浓淡，下方是预览块 + 色号（HEX / RGB 可切换）+ 色相 / 浓度 / 明度三格读数 |
+| **Snow Shot**（mg-chao） | https://github.com/mg-chao/snow-shot | 选区识别的分区思路：先估一块区域自己的底色、只把与紧邻像素有反差的部分当内容；用开运算扣掉卡片边框和分割线这类长横线 / 长竖线；按字高定核把同一行文字连成一条；把图标、图片这类大块单独摘出来，不与文字粘连 |
 | **思源笔记 SiYuan** | https://github.com/siyuan-note/siyuan | 运行平台与公开的文件 / 块 / 属性 API；插件加载器与集市包的规范依据；界面配色与交互尽量与思源原生保持一致 |
 
 说明：本插件未直接引入上述项目的代码包，相关能力均在实读源码后自行实现；界面、图标与工具组合为独立设计。
