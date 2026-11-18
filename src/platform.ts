@@ -231,6 +231,38 @@ export async function putFile(path: string, file: Blob, fileName: string): Promi
     }
 }
 
+/** 列目录（字体目录用它读用户上传的字体文件） */
+export interface DirEntry {
+    name: string;
+    isDir: boolean;
+    updated?: number;
+}
+
+export async function readDir(path: string): Promise<DirEntry[]> {
+    try {
+        const response = await fetch("/api/file/readDir", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({path}),
+        });
+        if (!response.ok) return [];
+        const payload = await response.json();
+        return Array.isArray(payload?.data) ? payload.data as DirEntry[] : [];
+    } catch {
+        return [];
+    }
+}
+
+/** 删除文件（用户移除自己上传的字体） */
+export async function removeFile(path: string): Promise<void> {
+    const response = await fetch("/api/file/removeFile", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path}),
+    });
+    if (!response.ok) throw new Error(`删除文件失败：${path}（HTTP ${response.status}）`);
+}
+
 /** 用 /upload 上传资源，返回 assets/xxx 路径（内核与 /api/asset/upload 等价） */export async function uploadAsset(file: Blob, fileName: string, docId?: string): Promise<string> {
     const form = new FormData();
     form.append("file[]", file, fileName);

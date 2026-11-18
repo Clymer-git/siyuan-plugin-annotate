@@ -2664,7 +2664,10 @@ html.annot-fs .b3-dialog__close {
    画面完全让给内容。**高度一点不改**——改了会触发「适应窗口」，
    画布被重新缩放，标注全部跑位。 */
 /* 键盘态：把界面高度锁成「弹出键盘之前」的像素值。
-   不锁的话 dvh 会跟着键盘缩小，舞台变矮 → viewBox 与外框比例变化 → 标注整体偏移。 */
+   不锁的话 dvh 会跟着键盘缩小，舞台变矮 → viewBox 与外框比例变化 → 标注整体偏移，
+   底部工具条也会被顶到键盘上面挡画面。
+   **三栏一律保持原样、不隐藏**：锁住高度后它们自然落到键盘下面，
+   用户收起键盘就能看见，不会卡在「没有工具条可用」的状态。 */
 .annot-root--mobile.is-keyboard {
   /* 只锁高度；flex 一起改会让宽度塌成内容宽度（216px 那种），必须显式 100% */
   flex: 0 0 auto;
@@ -2672,18 +2675,11 @@ html.annot-fs .b3-dialog__close {
   height: var(--annot-lock-h, 100dvh);
 }
 
-/* 舞台也锁住：三栏隐藏后若让它自己撑高，SVG 会换一个尺寸，
+/* 舞台也锁住：让它跟着键盘缩短的话，SVG 会换一个尺寸，
    内容按比例重新缩放 —— 那才是「键盘一弹标注全跑位」的真正原因。 */
 .annot-root--mobile.is-keyboard .annot-stage {
   flex: 0 0 auto;
   height: var(--annot-lock-stage, auto);
-}
-
-.annot-root--mobile.is-keyboard .annot-mobile-style,
-.annot-root--mobile.is-keyboard .annot-mobile-rail,
-.annot-root--mobile.is-keyboard .annot-mobile-fabs,
-.annot-root--mobile.is-keyboard .annot-mobile-topbar {
-  display: none !important;
 }
 
 /* PC 的三栏界面在手机上隐藏（DOM 保留，PC 测试仍依赖这些节点） */
@@ -2824,6 +2820,25 @@ html.annot-fs .b3-dialog__close {
   padding: 0 10px;
 }
 
+/* 整栏只有一个滑块时（马赛克 / 模糊 / 聚光灯）：把这组拉满整行，右侧不再留空 */
+.annot-mobile-style__scroll--fill {
+  padding-right: 8px;
+}
+
+.annot-mobile-style__group--slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 0;
+  gap: 8px;
+}
+
+/* 滑块吃掉标签与读数之间的全部宽度 */
+.annot-mobile-style__group--slider .annot-mobile-range {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
 .annot-mobile-range {
   flex: 0 0 auto;
   width: 96px;
@@ -2865,6 +2880,169 @@ html.annot-fs .b3-dialog__close {
   background: var(--annot-accent);
 }
 
+/* 文字工具的字体选择（v1.2.0-alpha.2）：按钮 + 面板 */
+.annot-font-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.annot-context__font {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 182px;
+}
+
+.annot-font-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 146px;
+}
+
+.annot-font-caret {
+  font-size: 10px;
+  opacity: .55;
+}
+
+.annot-context__font.is-open {
+  border-color: var(--annot-accent);
+  color: var(--annot-accent);
+}
+
+.annot-font-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 88;
+  width: 224px;
+  max-height: 328px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--annot-border);
+  border-radius: 11px;
+  background: var(--annot-panel);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .18);
+}
+
+/* 顶部上传按钮：主题色底 + 粗加号，一眼就是能点的功能键，同时充当分隔线 */
+.annot-font-upload {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter .12s ease;
+}
+
+.annot-font-upload:hover { filter: brightness(.94); }
+
+.annot-font-plus {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.annot-font-list { padding-top: 4px; }
+
+.annot-font-list + .annot-font-list,
+.annot-font-list--default {
+  margin-top: 4px;
+  border-top: 1px solid var(--annot-border);
+}
+
+.annot-font-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annot-font-item:hover { background: var(--annot-hover); }
+
+.annot-font-item.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-font-sep {
+  padding: 9px 10px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--annot-muted, rgba(127, 127, 127, .95));
+}
+
+.annot-font-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--annot-muted, rgba(127, 127, 127, .95));
+}
+
+/* 手机端：按钮自带毛玻璃小底，面板贴到屏幕上方固定展开 */
+.annot-mobile-font {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 128px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--annot-panel);
+  background: color-mix(in srgb, var(--annot-panel) 82%, transparent);
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.annot-mobile-font .annot-font-name { max-width: 92px; }
+
+/* 手机字体面板的挂载层：铺满 root 但不挡事件，只有面板本身可点 */
+.annot-font-host {
+  position: absolute;
+  inset: 0;
+  z-index: 97;
+  pointer-events: none;
+}
+
+.annot-font-host .annot-font-pop {
+  pointer-events: auto;
+}
+
+/* 手机：左右留 8px，宽度自适应；纵向位置由 JS 按顶栏底部写入 top */
+.annot-font-pop--mobile {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-height: 52vh;
+  z-index: 97;
+}
+
 .annot-mobile-range__value {
   min-width: 20px;
   font-size: 12px;
@@ -2872,6 +3050,11 @@ html.annot-fs .b3-dialog__close {
   text-align: right;
   color: var(--annot-text);
   opacity: .8;
+}
+
+/* 暗度带百分号，读数框留够位置，滑块才不会被挤短 */
+.annot-mobile-style__group--slider .annot-mobile-range__value {
+  min-width: 30px;
 }
 
 /* 框内按钮：去掉自带的小毛玻璃底，选中态用主色浅底 */
@@ -2891,6 +3074,8 @@ html.annot-fs .b3-dialog__close {
   background: var(--annot-accent-soft);
   color: var(--annot-accent);
   font-weight: 700;
+  --annot-badge-disc: var(--annot-accent);
+  --annot-badge-digit: var(--annot-accent-text);
 }
 
 .annot-mobile-style__group .annot-mobile-swatch {
@@ -3034,6 +3219,20 @@ html.annot-fs .b3-dialog__close {
   white-space: nowrap;
 }
 
+/* 字体名这类长度不定的标签：超了就省略，别把整条栏撑开 */
+.annot-mobile-topbar__btn > span {
+  display: block;
+  max-width: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 顶栏的样式按钮里放的是「真实缩略图」，高度单独给足，宽度跟着比例走 */
+.annot-mobile-topbar__btn > svg.annot-badge-icon {
+  width: auto;
+  height: 19px;
+}
+
 .annot-mobile-topbar__btn > svg {
   width: 22px;
   height: 15px;
@@ -3062,10 +3261,22 @@ html.annot-fs .b3-dialog__close {
   line-height: 1;
 }
 
+/* 「填充」按钮里的色点 */
+.annot-mobile-topbar__dot {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(127, 127, 127, .45);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .7);
+}
+
 .annot-mobile-topbar__btn.is-open {
   background: var(--annot-accent-soft);
   color: var(--annot-accent);
   font-weight: 600;
+  --annot-badge-disc: var(--annot-accent);
+  --annot-badge-digit: var(--annot-accent-text);
 }
 
 .annot-mobile-topbar__btn.is-on {
@@ -3073,6 +3284,8 @@ html.annot-fs .b3-dialog__close {
   /* 两枚模式按钮并排时只换字色不够明显，补一层浅底 + 加粗 */
   background: var(--annot-accent-soft);
   font-weight: 600;
+  --annot-badge-disc: var(--annot-accent);
+  --annot-badge-digit: var(--annot-accent-text);
 }
 
 /* 气泡：相对整条栏水平居中（栏本身居中于屏幕），宽度固定 220 */
@@ -3129,6 +3342,12 @@ html.annot-fs .b3-dialog__close {
   height: 20px;
 }
 
+/* 序号样式的缩略图：保留比例，只锁高度 */
+.annot-mobile-pop__item > svg.annot-badge-icon {
+  width: auto;
+  height: 30px;
+}
+
 .annot-mobile-pop__item > svg.annot-arrow-style-icon {
   width: 38px;
   height: 16px;
@@ -3151,6 +3370,9 @@ html.annot-fs .b3-dialog__close {
   background: var(--annot-accent-soft);
   color: var(--annot-accent);
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--annot-accent) 42%, transparent);
+  /* 序号样式缩略图的配色对：浅底上蓝球 + 白数字 */
+  --annot-badge-disc: var(--annot-accent);
+  --annot-badge-digit: var(--annot-accent-text);
 }
 
 /* 滑块类（马赛克块大小 / 模糊程度 / 聚光灯暗度）：占满一整行 */
@@ -3487,6 +3709,9 @@ html.annot-fs .b3-dialog__close {
   color: var(--annot-accent);
   font-weight: 600;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--annot-accent) 32%, transparent);
+  /* 序号样式缩略图：浅底上蓝球 + 白数字 */
+  --annot-badge-disc: var(--annot-accent);
+  --annot-badge-digit: var(--annot-accent-text);
 }
 
 .annot-mobile-tool.is-active:hover {
@@ -3938,7 +4163,38 @@ html.annot-fs .b3-dialog__close {
   background: var(--annot-accent);
   color: var(--annot-accent-text);
   font-weight: 600;
+  /* 序号样式缩略图的配色对：球跟按钮文字（白），数字跟按钮底色（蓝）。
+     球和字永远成对改写，不可能再撞成同一个颜色。 */
+  --annot-badge-disc: var(--annot-accent-text);
+  --annot-badge-digit: var(--annot-accent);
 }
+
+/* 序号样式切换：左边一枚「圆＋尖头」的小图，比两行字更快认 */
+.annot-context__chip--bubble {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+}
+
+/* 图标是「真的画了一遍序号」，比例随尖头长短变，所以只锁高度、宽度自适应 */
+.annot-root svg.annot-badge-icon {
+  display: block;
+  flex: none;
+  width: auto;
+  overflow: visible;
+  /* 思源全局有 svg { fill: currentColor }，这里的图形自带 fill，把它压回不描边 */
+  fill: none;
+  stroke: none;
+}
+
+.annot-context__chip--bubble > svg.annot-badge-icon {
+  height: 18px;
+}
+
+/* 选中时按钮整块变成主题色、文字转白，实心圆图标会变成「白球」：
+   数字的颜色由 --annot-badge-digit 统一接管（见上面的 .is-active 块），
+   这里不再单独写 fill，避免和变量对打架 */
 
 /* 聚光灯「遮罩颜色」：按钮左侧带一个小色球，黑白一眼分得清 */
 .annot-context__chip--mask {

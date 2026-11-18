@@ -1,7 +1,16 @@
-import type {ArrowStyleKey} from "../types";
+import type {ArrowStyleKey, NumberBubble} from "../types";
 import {normalizeArrowStyle} from "./arrowStyles";
 import {DEFAULT_NUMBER_FORMAT, normalizeNumberFormat, type NumberFormatKey} from "./numberFormat";
 import {DEFAULT_NUMBER_TIP, normalizeNumberTip, type NumberTipKey} from "./numberTip";
+
+/**
+ * 老场景里存的是 "circle"（圆形气泡），统一映射成 "solid"（实心圆）；
+ * 认不出的值一律当实心圆，避免旧数据渲染成空白。
+ */
+export function normalizeNumberBubble(value: unknown): NumberBubble {
+    if (value === "hollow" || value === "pointer" || value === "plain") return value;
+    return "solid";
+}
 
 /**
  * 工具栏样式预设。
@@ -37,6 +46,8 @@ export interface CurrentStyle {
     /** 填充色（与描边色分开） */
     fillColor: string;
     fontSize: number;
+    /** 文字字体档位；"" ＝ 跟随思源正文 */
+    fontFamily: string;
     /** 顶部属性栏的线条样式 */
     lineDash: LineDashKey;
     /** 虚线 / 点线 / 点划线的留空间距（像素） */
@@ -49,6 +60,12 @@ export interface CurrentStyle {
     lineRound: boolean;
     /** 序号的编号格式（1 / I / a / A / 一） */
     numberFormat: NumberFormatKey;
+    /** 序号的气泡样式：实心圆 / 空心圆 / 定位气泡 / 纯数字 */
+    numberBubble: NumberBubble;
+    /** 定位气泡的尖头与引线末端是否圆头 */
+    numberRound: boolean;
+    /** 定位气泡是否带细引线 */
+    numberLeader: boolean;
     /** 序号引线末端（箭头 / 圆点 / 方点） */
     numberTip: NumberTipKey;
     /** 序号引线用哪种箭头样式（只在端点=箭头时可见） */
@@ -109,12 +126,16 @@ export const DEFAULT_CURRENT: CurrentStyle = {
     fillOpacity: 0,
     fillColor: DEFAULT_PRESETS.colors[0],
     fontSize: 28,
+    fontFamily: "",
     lineDash: "solid",
     lineDashGap: 6,
     arrowStyle: "classic",
     arrowRounded: true,
     lineRound: true,
     numberFormat: DEFAULT_NUMBER_FORMAT,
+    numberBubble: "solid",
+    numberRound: true,
+    numberLeader: true,
     numberTip: DEFAULT_NUMBER_TIP,
     numberArrowStyle: "classic",
     spotlightOpacity: 0.6,
@@ -241,6 +262,7 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
                 ? parsed.fillColor.trim().toUpperCase()
                 : base.fillColor,
             fontSize: number(parsed.fontSize, base.fontSize, 8, 120),
+            fontFamily: typeof parsed.fontFamily === "string" ? parsed.fontFamily : base.fontFamily,
             lineDash: dash === "dashed" || dash === "dotted" || dash === "dashdot"
                 ? dash : base.lineDash,
             lineDashGap: number(parsed.lineDashGap, base.lineDashGap, 1, 20),
@@ -248,6 +270,9 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
             arrowRounded: parsed.arrowRounded !== false,
             lineRound: parsed.lineRound !== false,
             numberFormat: normalizeNumberFormat(parsed.numberFormat, base.numberFormat),
+            numberBubble: normalizeNumberBubble(parsed.numberBubble),
+            numberRound: parsed.numberRound !== false,
+            numberLeader: parsed.numberLeader !== false,
             numberTip: normalizeNumberTip(parsed.numberTip, base.numberTip),
             numberArrowStyle: normalizeArrowStyle(parsed.numberArrowStyle, base.numberArrowStyle),
             spotlightOpacity: number(parsed.spotlightOpacity, base.spotlightOpacity, 0, 0.95),
@@ -281,12 +306,16 @@ export function saveCurrentStyle(style: CurrentStyle): void {
             fillOpacity: style.fillOpacity,
             fillColor: style.fillColor,
             fontSize: style.fontSize,
+            fontFamily: style.fontFamily,
             lineDash: style.lineDash,
             lineDashGap: style.lineDashGap,
             arrowStyle: style.arrowStyle,
             arrowRounded: style.arrowRounded,
             lineRound: style.lineRound,
             numberFormat: style.numberFormat,
+            numberBubble: style.numberBubble,
+            numberRound: style.numberRound,
+            numberLeader: style.numberLeader,
             numberTip: style.numberTip,
             numberArrowStyle: style.numberArrowStyle,
             spotlightOpacity: style.spotlightOpacity,

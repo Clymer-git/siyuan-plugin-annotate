@@ -75,9 +75,9 @@ check("README.md 在包里且写了功能介绍",
         const name = Object.values(manifest.readme ?? {}).find((v) => typeof v === "string" && v.trim()) || "README.md";
         if (!(await exists(name))) return false;
         const md = (await read(name)).toString("utf8");
-        // 标题允许「## 功能」或更口语的「## 能做什么」，只要讲了功能与用法即可
-        return md.includes("勾画阁·猫抓") && /## (功能|能做什么)/.test(md) &&
-            md.includes("## 怎么用") && md.length > 600;
+        // 标题允许「## 标注工具 / 功能 / 能做什么」，只要讲了功能与用法即可
+        return md.includes("勾画阁·猫抓") && /## (标注工具|功能|能做什么)/.test(md) &&
+            /## (三步上手|怎么用|使用)/.test(md) && md.length > 600;
     })(), "README 需含名称、功能、用法");
 check("README 里引用了预览图", await (async () => {
     const name = Object.values(manifest.readme ?? {}).find((v) => typeof v === "string" && v.trim()) || "README.md";
@@ -708,7 +708,7 @@ check("序号引线箭头直接复用 arrowShape（与箭头工具同一套几�
 check("序号引线头部按线宽描边 + miterlimit 10（尖端不会露出线头）",
     /numberLeader[\s\S]{0,1600}?"stroke-miterlimit": 10/.test(js));
 check("序号圆点 / 方点的标记尺寸随线宽变，主干也走同一套 shaft 路径",
-    js.includes("const size = Math.max(4, lineWidth * 2)") && js.includes("arrowShaftPath(geometryOf(n))"));
+    js.includes("const size = Math.max(4, lineWidth * 2)") && js.includes("arrowShaftPath(lead)"));
 check("编号格式与端点都落在对象上（格式存 geometry，端点存 style），可持久化",
     js.includes("format = this.current.numberFormat") &&
     /numberTip: *type === "number" \? current\.numberTip/.test(js) &&
@@ -724,8 +724,10 @@ check("序号文字按格式显示，多字符时字号自动收小（不撑出�
 check("序号也参与「圆线」开关与属性面板标签",
     /setArrowRounded\(enabled\)[\s\S]{0,260}?=== "number"/.test(js) &&
     js.includes("序号 ${formatNumber("));
-check("手机端上栏也给了编号格式与端点（否则改成罗马数字后回不去）",
-    js.includes('"numbers", "fonts"]') && js.includes('data-group="numbers"'));
+check("v1.2.0-alpha.7：手机端编号 / 样式 / 端点都在顶部悬浮栏（不再挤在第二行）",
+    js.includes('"numberFormat"') && js.includes('"numberTip"') && js.includes('"numberBubble"') &&
+    js.includes('number-leader-toggle') && js.includes('number-round-toggle') &&
+    !js.includes('data-group="numbers"'));
 
 // ---- v0.16.0：顶栏按钮换位 / 文案 / 全屏 ----
 check("顶栏顺序：取消在左、保存在右，全屏按钮排最右",
@@ -909,9 +911,10 @@ check("拖锚点只改 anchor；拖显示框只改 x/y（translateObject 单独�
     /name === "anchor"[\s\S]{0,220}?m\.anchor = unrotatePoint/.test(js) &&
     js.includes("hitsMagnifierAnchor"));
 check("聚光灯/放大镜工具下按住同类对象＝调整它，而不是再画一个",
+    // 现在由通用的「同类命中」统一接管：聚光灯对聚光灯、放大镜对放大镜（含它的锚点）
     js.includes("adjustExisting") &&
-    js.includes('this.activeTool === "spotlight" && under.type === "spotlight"') &&
-    js.includes('this.activeTool === "magnifier" && under.type === "magnifier"'));
+    js.includes("isSameKindTool") &&
+    js.includes("hitsMagnifierAnchor"));
 check("悬浮条：聚光灯有暗度滑杆 + 两种形状，放大镜有 4 档倍数 + 两种形状",
     js.includes('data-action="spotlight-shape"') &&
     js.includes('data-action="magnifier-zoom"') &&
@@ -920,9 +923,9 @@ check("悬浮条：聚光灯有暗度滑杆 + 两种形状，放大镜有 4 档�
     js.includes("MAGNIFIER_SHAPES"));
 check("两个效果对象都排除在线型虚线之外（不会被设成虚线框）",
     /object\.type !== "spotlight" && object\.type !== "magnifier"/.test(js));
-check("手机端：放大镜给颜色/线宽，聚光灯不给分组",
+check("手机端：放大镜给颜色/线宽，聚光灯给暗度滑块",
     /case "magnifier":\s*return \["colors", "widths"\]/.test(js) &&
-    /case "spotlight":\s*return \[\]/.test(js));
+    /case "spotlight":\s*return \["spotlightOpacity"\]/.test(js));
 check("正文预览也接了放大镜采样（笔记里看到的和编辑器一致）",
     /magnifier = new MagnifierRenderer\(\)/.test(srcPreviewFile) &&
     srcPreviewFile.includes("this.magnifier.getDataUrl"));
@@ -1043,6 +1046,10 @@ const srcEditor2 = await readFile(path.join(root, "src/editor/AnnotEditor.ts"), 
 const srcShapes2 = await readFile(path.join(root, "src/editor/shapes.ts"), "utf8");
 const srcSmart = await readFile(path.join(root, "src/editor/smartSelect.ts"), "utf8");
 const srcPresetsFile = await readFile(path.join(root, "src/editor/presets.ts"), "utf8");
+const srcFontsFile = await readFile(path.join(root, "src/editor/fonts.ts"), "utf8");
+const srcNumberIcon = await readFile(path.join(root, "src/editor/numberIcon.ts"), "utf8");
+const srcColorFile = await readFile(path.join(root, "src/editor/color.ts"), "utf8");
+const srcPersistence = await readFile(path.join(root, "src/editor/persistence.ts"), "utf8");
 const srcSmartWorker = await readFile(path.join(root, "src/editor/smartWorker.ts"), "utf8");
 check("移动端两颗独立圆钮：左选择、右对齐，圆形、48px，无平移",
     js.includes("annot-mobile-fabs") && js.includes('"mobile-select"') &&
@@ -1210,12 +1217,11 @@ check("v0.26.1：四角等比缩放（宽高比不变），四边中点才改比
     /height = h0 \* k;/.test(srcEditor2) &&
     /\} else \{\s*\n\s*\/\/ 四边中点/.test(srcEditor2));
 
-check("v0.26.11：键盘弹起只隐藏悬浮栏，画布尺寸一格不动（否则标注必错位）",
+check("v0.26.11：键盘弹起时界面与舞台都锁高度，画布尺寸一格不动（否则标注必错位）",
     css.includes(".annot-root--mobile.is-keyboard") &&
-    /\.annot-root--mobile\.is-keyboard \.annot-mobile-rail[^{]*\{[^}]*display: none/.test(css) &&
-    /\.annot-root--mobile\.is-keyboard \.annot-mobile-fabs[^{]*\{[^}]*display: none/.test(css) &&
-    /\.annot-root--mobile\.is-keyboard \.annot-mobile-style[^{]*\{[^}]*display: none/.test(css) &&
-    /\.annot-root--mobile\.is-keyboard \.annot-mobile-topbar[^{]*\{[^}]*display: none/.test(css) &&
+    // v1.2.0-alpha.22 起不再隐藏三栏：锁住高度后它们自然落到键盘下面，
+    // 收键盘就能看见，不会卡在「没有工具条可用」
+    !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-rail") &&
     // 关键是「锁住」而不是「跟随」：界面与舞台都锁成键盘弹之前的像素高度，
     // 键盘再矮也不会重排，画布内容因此一格不动
     /\.annot-root--mobile\.is-keyboard \{[^}]*height: var\(--annot-lock-h/.test(css) &&
@@ -1369,6 +1375,212 @@ check("v1.1.0-alpha.9：位移超过 8px 不算点击，手势结束后 200ms �
     /this\.smartCooldownUntil = performance\.now\(\) \+ 200;/.test(srcEditor2) &&
     /if \(performance\.now\(\) < this\.smartCooldownUntil\) return;/.test(srcEditor2) &&
     /distance\(this\.toImagePoint\(e\), tap\.start\) \* this\.viewport\.zoom < 8/.test(srcEditor2));
+
+check("v1.2.0-alpha.7：文字工具的字体入口双端都在悬浮栏上（手机端在顶栏）",
+    srcEditor2.includes('data-action="font-pop"') &&
+    srcEditor2.includes('case "text": return ["colors", "fonts"]') &&
+    srcEditor2.includes('case "text": {') &&
+    srcFontsFile.includes("var(--b3-font-family,") &&
+    srcFontsFile.includes("var(--b3-font-family-code,"));
+
+check("v1.2.0-alpha.1：导出成品图时只解析字体变量，用户选的字体不会被冲成 sans-serif",
+    srcFontsFile.includes("export function inlineFontVars") &&
+    srcFontsFile.includes("var(--b3-font-family-code") &&
+    !srcPersistence.includes('replace(/font-family="[^"]*"/g, \'font-family="sans-serif"\')') &&
+    srcPersistence.includes("inlineFontVars(new XMLSerializer().serializeToString(objectLayer))"));
+
+check("v1.1.0-alpha.10：字体存档位键、渲染时才翻译成字体栈（换主题旧文字也跟着走）",
+    srcTypes.includes("fontFamily?: string") &&
+    /"font-family": fontStackOf\(object\.style\.fontFamily\)/.test(srcShapes2) &&
+    srcEditor2.includes("editor.style.fontFamily = fontStackOf(object.style.fontFamily)") &&
+    srcEditor2.includes("saveCurrentStyle(this.current)"));
+
+check("v1.2.0-alpha.2：字体面板顶部是上传按钮，自定义字体在前、系统字体在后",
+    srcEditor2.includes('class="annot-font-upload" data-action="font-upload"') &&
+    /annot-font-upload[\s\S]{0,600}?annot-font-list--default/.test(srcEditor2) &&
+    /annot-font-list--default[\s\S]{0,200}?annot-font-sep">系统字体/.test(srcEditor2) &&
+    !/>\s*自定义字体\s*</.test(srcEditor2) &&
+    srcFontsFile.includes("export function detectSystemFonts") &&
+    srcFontsFile.includes("export async function queryLocalFonts") &&
+    srcFontsFile.includes("export async function loadUploadedFonts"));
+
+check("v1.2.0-alpha.1：支持上传字体，存进数据目录、导出时内嵌（插件包不含字体）",
+    srcFontsFile.includes("export async function uploadFontFile") &&
+    srcFontsFile.includes("buildFontFaceCss") &&
+    srcFontsFile.includes("new FontFace(family, data)") &&
+    srcEditor2.includes("private async pickFontFile") &&
+    srcEditor2.includes('accept = ".ttf,.otf,.woff,.woff2"') &&
+    srcPersistence.includes("fontCss") &&
+    srcPersistence.includes("<defs><style") &&
+    srcEditor2.includes("await buildFontFaceCss(usedFonts)"));
+
+check("v1.2.0-alpha.3：系统字体显示中文名，渲染仍用英文族名",
+    srcFontsFile.includes("FONT_CN_NAMES") &&
+    srcFontsFile.includes("function pickLabel") &&
+    srcFontsFile.includes("fullName") &&
+    srcEditor2.includes("this.systemFonts.map((font) => item(font.family, font.label))") &&
+    srcFontsFile.includes('return `"${key}", system-ui, sans-serif`;'));
+
+check("v1.2.0-alpha.4：上传字体只收 ttf/otf/woff/woff2，失败有具体原因",
+    srcFontsFile.includes("const FONT_EXT = /\\.(ttf|otf|woff2?)$/i") &&
+    !srcFontsFile.includes("|ttc") &&
+    srcFontsFile.includes("MAX_FONT_BYTES") &&
+    srcFontsFile.includes("export class FontUploadError") &&
+    srcFontsFile.includes("只支持 ttf、otf、woff、woff2 格式的字体") &&
+    srcEditor2.includes("error instanceof FontUploadError"));
+
+check("v1.2.0-alpha.6：定位气泡＝完整圆 + 单独尖头，尖头颜色跟主色",
+    srcShapes2.includes("function pointerBubble") &&
+    srcShapes2.includes("const bubble = normalizeNumberBubble(n.bubble)") &&
+    srcShapes2.includes('const isPointer = bubble === "pointer"') &&
+    srcShapes2.includes("Math.acos") &&
+    // 尖头是独立三角（annot-head），填充＝描边色；圆是完整 circle，内部填充走 fillColor
+    srcShapes2.includes('class: "annot-head"') &&
+    srcShapes2.includes('fill: object.style.fillColor ?? "#FFFFFF"') &&
+    srcShapes2.includes("fill: ink,") &&
+    // 反色只发生在实心圆分支里，其它样式一律用主色
+    /if \(!isPlain\) \{[\s\S]{0,600}?ink = pickBadgeTextColor\(color\);/.test(srcShapes2) &&
+    /if \(hollow\) \{[\s\S]{0,700}?ink = readableInk\(color,/.test(srcShapes2) &&
+    !srcShapes2.includes("inkOnLight") &&
+    srcShapes2.includes("dist > d + 2") &&
+    srcTypes.includes('export type NumberBubble = "solid" | "hollow" | "pointer" | "plain"'));
+
+check("v1.2.0-alpha.10：定位气泡有引线 / 圆头 / 填充，边框与文字跟随主色",
+    srcEditor2.includes('data-action="number-leader"') &&
+    srcEditor2.includes('data-action="number-round"') &&
+    srcEditor2.includes('swatch("fillColor"') &&
+    srcEditor2.includes('value: "fillColor"') &&
+    !srcEditor2.includes('data-value="numberTextColor"') &&
+    /bubble === "pointer" \? leaderChips \+ roundChips \+ fillChips/.test(srcEditor2));
+
+check("v1.2.0-alpha.6：拖动预览就按当前样式画（不再是光秃秃的圆）",
+    /bubble: this\.current\.numberBubble,[\s\S]{0,80}?leader: this\.current\.numberLeader,/.test(srcEditor2));
+
+check("v1.2.0-alpha.6：序号工具栏的样式切换与专属参数互斥显示",
+    srcEditor2.includes('data-action="number-bubble"') &&
+    srcEditor2.includes('data-action="number-leader"') &&
+    /bubble === "pointer" \? leaderChips/.test(srcEditor2) &&
+    srcEditor2.includes("private setNumberBubble") &&
+    srcEditor2.includes("private setNumberLeader"));
+
+check("v1.2.0-alpha.7：重建工具栏后保持横向滚动位置（不再弹回最左）",
+    /const keepScroll = host\.scrollLeft;[\s\S]{0,600}?host\.scrollLeft = keepScroll;/.test(srcEditor2) &&
+    /const keepScroll = bar\.scrollLeft;[\s\S]{0,900}?bar\.scrollLeft = keepScroll;/.test(srcEditor2));
+
+check("v1.2.0-alpha.7：手机字体面板挂在 root 下，不被横向滚动的上栏裁掉",
+    srcEditor2.includes("private renderMobileFontPop") &&
+    srcEditor2.includes('data-role="mobile-font-host"') &&
+    srcEditor2.includes("this.renderMobileFontPop();") &&
+    css.includes(".annot-font-host") &&
+    !/\.annot-font-pop--mobile \{[^}]*position: fixed/.test(css));
+
+check("v1.2.0-alpha.10：序号顶栏第一位是样式，点开四选一且状态即时同步",
+    /key: "numberBubble"[\s\S]{0,260}?icon: this\.numberStyleIcon\(bubble\)/.test(srcEditor2) &&
+    /if \(key === "numberBubble"\)[\s\S]{0,320}?cell\("number-bubble"/.test(srcEditor2) &&
+    srcEditor2.includes('action === "number-round-toggle"') &&
+    srcEditor2.includes('action === "number-leader-toggle"') &&
+    srcEditor2.includes('item.value === undefined ? "" : ` data-value="${item.value}"`'));
+
+check("v1.2.0-alpha.7：手机第二行不再重复放序号 / 字体设置",
+    srcEditor2.includes('case "number": return ["colors", "fonts"]') &&
+    srcEditor2.includes('case "text": return ["colors", "fonts"]'));
+
+check("v1.2.0-alpha.12：样式图标独立成模块，不再复用画布渲染",
+    srcEditor2.includes("numberStyleIconSvg") &&
+    srcNumberIcon.includes("export function numberStyleIconSvg") &&
+    !/renderObject\s*\(/.test(srcNumberIcon) &&
+    !/defaultStyle\s*\(/.test(srcNumberIcon) &&
+    !srcShapes2.includes("monochrome") &&
+    srcNumberIcon.includes("currentColor"));
+
+check("v1.2.0-alpha.12：实心圆图标里的数字取按钮底色，选中时换成主题色",
+    // 颜色改为「变量对 + 内联 style」：球与字成对改写，杜绝两者同色
+    srcNumberIcon.includes("const DISC = \"var(--annot-badge-disc, currentColor)\"") &&
+    srcNumberIcon.includes("const DIGIT_ON_DISC = \"var(--annot-badge-digit, var(--annot-panel, #fff))\"") &&
+    srcNumberIcon.includes('class="annot-badge-digit"') &&
+    srcNumberIcon.includes('style="fill:${fill}"') &&
+    css.includes("--annot-badge-disc: var(--annot-accent-text);") &&
+    css.includes("--annot-badge-digit: var(--annot-accent);") &&
+    !css.includes("svg.annot-badge-icon .annot-badge-digit"));
+
+check("v1.2.0-alpha.12：画布上的定位气泡恢复「完整圆 + 三角尖头被圆盖住」",
+    srcShapes2.includes('d: `M${t1.x} ${t1.y}L${apex.x} ${apex.y}L${t2.x} ${t2.y}Z`') &&
+    /"stroke-width": lineWidth,\s*"stroke-linejoin": round \? "round" : "miter"/.test(srcShapes2) &&
+    !srcShapes2.includes("A${radius} ${radius} 0 0 1"));
+
+check("v1.2.0-alpha.12：图标里的尖头走圆弧收回，圆保持完整",
+    srcNumberIcon.includes("A${radius} ${radius} 0 0 1 ${t1}Z") &&
+    srcNumberIcon.includes("Math.acos"));
+
+check("v1.2.0-alpha.13：空心圆与纯数字也能拉引线，起点让到圆外",
+    srcShapes2.includes("const leaderInset = hollow ? n.radius : (isPlain ? n.radius * 0.8 : 0)") &&
+    srcShapes2.includes("lineWidth, leaderInset)") &&
+    srcEditor2.includes("const tipBlock =") &&
+    /bubble === "hollow" \? fillChips \+ tipBlock/.test(srcEditor2) &&
+    /: tipBlock\);/.test(srcEditor2));
+
+check("v1.2.0-alpha.13：空心圆内部固定实色，颜色只由取色器控制",
+    /if \(hollow\) \{[\s\S]{0,400}?"fill-opacity": 1,/.test(srcShapes2) &&
+    srcShapes2.includes('fill: object.style.fillColor ?? "#FFFFFF"') &&
+    !srcEditor2.includes("number-fill-none") &&
+    !srcEditor2.includes("setNumberFillNone") &&
+    srcEditor2.includes('swatch("fillColor"'));
+
+check("v1.2.0-alpha.14：切成定位气泡时自动补默认尖头，切回圆形时清掉",
+    srcShapes2.includes("export function defaultPointerTip") &&
+    srcEditor2.includes("const wasPointer = prev === \"pointer\"") &&
+    srcEditor2.includes("n.tip = defaultPointerTip(n)") &&
+    /bubble !== "pointer" && wasPointer[\s\S]{0,80}?n\.tip = null;/.test(srcEditor2) &&
+    srcEditor2.includes("n.leader = false;"));
+
+check("v1.2.0-alpha.14：缺尖头数据时安全降级，不会算出 NaN",
+    srcShapes2.includes("Number.isFinite(n.tip.x) && Number.isFinite(n.tip.y)") &&
+    srcPersistence.includes("defaultPointerTip(n)") &&
+    srcPersistence.includes("normalizeNumberBubble"));
+
+check("v1.2.0-alpha.15：浅底序号的文字不会撞色，实心圆反色只在自己分支里",
+    srcColorFile.includes("export function readableInk") &&
+    srcColorFile.includes("export function contrastRatio") &&
+    /ink = readableInk\(color, object\.style\.fillColor \?\? "#FFFFFF"\)/.test(srcShapes2) &&
+    !srcShapes2.includes("inkOnLight"));
+
+check("v1.2.0-alpha.15：切样式不拿主色顶替填充色，圆心原地不动",
+    // 实心圆 / 纯数字的底色是主色，那不是填充色；带过去会让定位气泡整颗变红
+    !/object\.style\.fillColor = object\.style\.color;/.test(srcEditor2) &&
+    srcEditor2.includes("object.style.fillColor === object.style.color") &&
+    /n\.tip = defaultPointerTip\(n\)/.test(srcEditor2) &&
+    !/n\.center = /.test(srcEditor2));
+
+check("v1.2.0-alpha.16：序号文字色的取色器真正生效",
+    srcShapes2.includes("if (object.style.numberTextColor) ink = object.style.numberTextColor;") &&
+    srcShapes2.indexOf("numberTextColor) ink = object.style.numberTextColor")
+        > srcShapes2.indexOf("ink = pickBadgeTextColor(color)"));
+
+check("v1.2.0-alpha.19：同类对象内起手改为选中，不再叠一个",
+    // 几何命中（不依赖 DOM 事件目标，上层盖着别的类型也能找对同类那一个）
+    srcEditor2.includes("private findSameKindAt(tool: string, p: Point)") &&
+    srcEditor2.includes("for (let i = this.scene.objects.length - 1; i >= 0; i--)") &&
+    srcEditor2.includes("private isSameKindTool(tool: string, type: AnnotType)") &&
+    // 高亮的笔迹与色块算同一类
+    srcEditor2.includes('return tool === "highlight" && (type === "highlight" || type === "highlightRect")') &&
+    // 起点在同类对象上 → 走「选中 + 拖动」而不是「画新的」
+    srcEditor2.includes("this.findSameKindAt(this.activeTool, p) ?? under") &&
+    /adjustExisting && hitObject/.test(srcEditor2) &&
+    // 文字工具也要让路，否则会直接新建一个文字对象
+    srcEditor2.includes('this.activeTool === "text" && !adjustExisting'));
+
+check("v1.2.0-alpha.22：键盘态只锁高度，不再隐藏底部三栏",
+    // 锁高度：避免 dvh 随键盘缩、工具条被顶到键盘上方
+    css.includes("height: var(--annot-lock-h, 100dvh)") &&
+    // 三栏一条都不能在键盘态里被 display:none
+    !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-rail") &&
+    !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-fabs") &&
+    !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-style") &&
+    !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-topbar") &&
+    // 点画布结束输入时，这一下不许再落到画布上新建：
+    // 触屏走 swallowPointer（放行事件让舞台判断双指），鼠标直接拦在捕获阶段
+    srcEditor2.includes("this.swallowPointer = (event as PointerEvent).pointerId") &&
+    srcEditor2.includes("e.pointerId === this.swallowPointer"));
 
 // ---------------------------------------------------------------- 报告
 console.log(`\n=== 校验目标：${target} ===\n`);

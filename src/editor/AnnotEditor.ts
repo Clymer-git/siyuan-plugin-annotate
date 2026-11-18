@@ -27,7 +27,7 @@ import {
 import {Sidebar, type SidebarSelectMods} from "./sidebar";
 import {
     loadPresets, savePresets, normalizeHex, loadCurrentStyle, saveCurrentStyle, clonePresets,
-    DEFAULT_PRESETS, DEFAULT_CURRENT,
+    normalizeNumberBubble, DEFAULT_PRESETS, DEFAULT_CURRENT,
     type StylePresets, type CurrentStyle, type LineDashKey,
 } from "./presets";
 import {
@@ -57,6 +57,12 @@ import {
     invert, mapRect, remapObjects, rotateCanvas, toMatrixString,
 } from "./canvas";
 import {detectRegions, SMART_MAX_SIDE, type SmartRegion, type SmartRun} from "./smartSelect";
+import {numberStyleIconSvg} from "./numberIcon";
+import {
+    fontStackOf, fontLabelOf, defaultFontLabel, invalidateFontCache,
+    detectSystemFonts, queryLocalFonts, loadUploadedFonts, uploadFontFile,
+    buildFontFaceCss, FontUploadError, type FontEntry,
+} from "./fonts";
 import SmartWorker from "./smartWorker?worker&inline";
 import {
     DEFAULT_EXTEND, EXTEND_DIRS, allDirectionsOn, backgroundForState, firstActiveDir, isDirEditable,
@@ -69,7 +75,7 @@ import {
 } from "./crop";
 import {CropSession} from "./cropSession";
 import {
-    renderObject, renderDraft, renderHandles, getBounds, boundsCenter,
+    renderObject, renderDraft, renderHandles, defaultPointerTip, getBounds, boundsCenter,
     translateObject, scaleObjectToBounds, unrotatePoint, setRotation,
     defaultStyle, DEFAULT_TEXT_STROKE_COLOR, DEFAULT_TEXT_STROKE_WIDTH, type Bounds,
 } from "./shapes";
@@ -85,7 +91,8 @@ import {
     type AnnotObject, type AnnotScene, type AnnotType, type ArrowGeometry,
     type CanvasState, type CropWindow, type EllipseGeometry, type Geometry, type HighlightGeometry,
     type BlurGeometry, type LineGeometry, type MagnifierGeometry, type MosaicGeometry,
-    type NumberGeometry, type Point, type PropertyPatch, type RectGeometry, type SpotlightGeometry,
+    type NumberBubble, type NumberGeometry, type Point, type PropertyPatch, type RectGeometry,
+    type SpotlightGeometry,
     type TextGeometry, type ToolType, type ViewportState,
 } from "../types";
 import {
@@ -250,7 +257,7 @@ type PresetSlotKind = "color" | "width" | "dash" | "fill" | "font";
 /** 色轮弹窗当前作用的目标 */
 type ColorPopTarget =
     | {kind: "current"}
-    | {kind: "prop"; prop: "color" | "textStrokeColor"}
+    | {kind: "prop"; prop: "color" | "textStrokeColor" | "fillColor" | "numberTextColor"}
     | {kind: "extend-bg"}
     | null;
 
@@ -285,6 +292,21 @@ const TB_TIP_ICONS: Record<string, string> = {
     square: `${TB_SVG}><path d="M2 8H13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`
         + `<rect x="14.2" y="4.6" width="6.8" height="6.8" rx="1" fill="currentColor"/></svg>`,
 };
+/** 引线开 / 关：圆点 + 线（开） / 只有圆点（关） */
+const TB_LEADER_ON = `${TB_SVG}><circle cx="6" cy="8" r="3.2" fill="currentColor"/>`
+    + `<path d="M9.6 8H20" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
+const TB_LEADER_OFF = `${TB_SVG}><circle cx="6" cy="8" r="3.2" fill="currentColor"/>`
+    + `<path d="M10.4 8h9.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"`
+    + ` stroke-dasharray="2 3" opacity=".45"/></svg>`;
+
+/** 序号的四种样式：顺序即界面顺序（实心圆 → 空心圆 → 定位 → 纯数字） */
+const NUMBER_BUBBLES: Array<{key: NumberBubble; label: string; short: string}> = [
+    {key: "solid", label: "实心圆气泡", short: "实心"},
+    {key: "hollow", label: "空心圆气泡", short: "空心"},
+    {key: "pointer", label: "定位气泡", short: "定位"},
+    {key: "plain", label: "纯数字序号", short: "数字"},
+];
+
 /** 显示框 / 遮罩形状 */
 const TB_SHAPE_RECT = `${TB_SVG}><rect x="3" y="3" width="18" height="10" rx="2" stroke="currentColor" stroke-width="2"/></svg>`;
 const TB_SHAPE_ELLIPSE = `${TB_SVG}><ellipse cx="12" cy="8" rx="9" ry="5" stroke="currentColor" stroke-width="2"/></svg>`;
@@ -312,6 +334,8 @@ interface MobileTopItem {
     toggle?: boolean;
     /** 开关型按钮直接复用的 PC action（有它就不弹气泡） */
     action?: string;
+    /** 传给 action 的参数，对应按钮上的 data-value */
+    value?: string;
     /** 长按 / 悬停提示 */
     title: string;
 }
@@ -349,6 +373,15 @@ const ARROW_ICON = (angle: number): string =>
     `<g${angle ? ` transform="rotate(${angle} 12 12)"` : ""}>` +
     `<path d="M12 19.5V5M5.6 11.4L12 5l6.4 6.4"/></g></svg>`;
 
+/** 这些浮层 / 输入框内部允许滚轮滚动，不触发画布缩放 */
+const WHEEL_SCROLL_SELECTOR = [
+    '[data-role="font-pop"]',
+    '[data-role="attr-pop"]',
+    '[data-role="color-pop"]',
+    '[data-role="pop-lines"]',
+    ".annot-text-editor",
+].join(",");
+
 export class AnnotEditor {
     private dialog: Dialog | null = null;
     private root: HTMLElement | null = null;
@@ -378,6 +411,14 @@ export class AnnotEditor {
     } | null = null;
     /** 手势结束后 200ms 内不响应单击识别，防止抬手那一下误触 */
     private smartCooldownUntil = 0;
+    /** 系统字体（family 用于渲染，label 用于显示中文名） */
+    private systemFonts: FontEntry[] = [];
+    /** 样式切换按钮的图标（按样式 / 颜色 / 线宽 / 字号缓存，避免每帧重画） */
+    private numberIconCache = new Map<string, string>();
+    /** 用户上传的字体（面板里「我的字体」区） */
+    private uploadedFonts: FontEntry[] = [];
+    /** 字体面板是否展开 */
+    private fontPopOpen = false;
     /** 降采样后的整幅画面，按「底图 + 画布 + 矩阵」缓存；点击识别时直接取 */
     private smartBuffer: {key: string; data: Uint8ClampedArray; width: number; height: number; scale: number} | null = null;
     private svg: SVGSVGElement | null = null;
@@ -428,6 +469,11 @@ export class AnnotEditor {
      * touches.length 做一道硬闸。
      */
     private gestureLocked = false;
+    /**
+     * 「这一指针只用来结束文字输入，不许落到画布上」。
+     * 记的是 pointerId：触摸时放行事件（舞台要靠它判断双指），但 onPointerDown 见到就跳过。
+     */
+    private swallowPointer = -1;
     /**
      * 双指手势的判定状态机：
      *  - pending   两指刚落下，还不知道用户要「按住一指画」还是「捏合缩放」
@@ -1038,7 +1084,41 @@ export class AnnotEditor {
                 this.abort.signal.addEventListener("abort", () => columnsObserver.disconnect(), {once: true});
             }
         }
-        this.stopThemeWatch = watchTheme(this.root, () => this.themePreference);
+        // 每次打开编辑器都重新读一次思源当前字体：第三方字体插件 / 思源设置可能在这期间改过
+        invalidateFontCache();
+        // 系统字体：先同步度量探测（几毫秒），有本地字体接口再异步补全；
+        // 用户上传的字体单独读一次目录并注册
+        this.systemFonts = detectSystemFonts();
+        void queryLocalFonts().then((list) => {
+            if (!list.length) return;
+            // 本地字体接口给的更全（还带本地化全名），以它为准，缺的补上
+            const seen = new Set(list.map((item) => item.family));
+            const merged = [...list, ...this.systemFonts.filter((item) => !seen.has(item.family))]
+                .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
+            if (merged.length === this.systemFonts.length) return;
+            this.systemFonts = merged;
+            if (this.activeTool === "text") this.render();
+        });
+        void loadUploadedFonts().then((list) => {
+            if (!list.length) return;
+            this.uploadedFonts = list;
+            if (this.activeTool === "text") this.render();
+        });
+        // 点字体面板以外的地方就收起（延后一帧，别把这一次点击吃掉）
+        this.root?.addEventListener("pointerdown", (event) => {
+            if (!this.fontPopOpen) return;
+            const target = event.target as Element | null;
+            if (target?.closest?.('[data-role="font-pop"]')) return;
+            if (target?.closest?.('[data-action="font-pop"]')) return;
+            this.fontPopOpen = false;
+            window.setTimeout(() => this.render(), 0);
+        }, {capture: true, signal: this.abort.signal});
+        this.stopThemeWatch = watchTheme(this.root, () => {
+            // 换主题可能连带换字体，丢掉解析缓存让下一帧重新读
+            invalidateFontCache();
+            this.render();
+            return this.themePreference;
+        });
         if (this.stage && typeof ResizeObserver !== "undefined") {
             this.resizeObserver = new ResizeObserver(() => this.fitToStage());
             this.resizeObserver.observe(this.stage);
@@ -1158,6 +1238,19 @@ export class AnnotEditor {
                 this.toggleAlignMode(false);
                 this.setTool("select");
             }
+            else if (action === "font-pop") {
+                this.fontPopOpen = !this.fontPopOpen;
+                this.render();
+            }
+            else if (action === "font-upload") {
+                this.fontPopOpen = false;
+                this.render();
+                void this.pickFontFile();
+            }
+            else if (action === "font-pick") {
+                this.fontPopOpen = false;
+                this.applyFontFamily(button.getAttribute("data-value") ?? "", true);
+            }
             else if (action === "align-op") this.alignSelection(button.getAttribute("data-value") as AlignOp);
             else if (action === "help") this.toggleHelp();
             else if (action === "close-help") this.toggleHelp(false);
@@ -1198,6 +1291,39 @@ export class AnnotEditor {
             }
             else if (action === "number-format") {
                 this.setNumberFormat(normalizeNumberFormat(button.getAttribute("data-value")));
+            }
+            else if (action === "number-leader-toggle") {
+                const picked = this.getObject(this.selectedId);
+                const on = picked?.type === "number"
+                    ? (picked.geometry as NumberGeometry).leader !== false : this.current.numberLeader;
+                this.setNumberLeader(!on);
+            }
+            else if (action === "number-bubble") {
+                this.setNumberBubble(normalizeNumberBubble(button.getAttribute("data-value")));
+            }
+            else if (action === "number-round") {
+                this.setNumberRound(button.getAttribute("data-value") !== "off");
+            }
+            else if (action === "number-round-toggle") {
+                const picked = this.getObject(this.selectedId);
+                const on = picked?.type === "number"
+                    ? picked.style.bubbleRound !== false : this.current.numberRound;
+                this.setNumberRound(!on);
+            }
+            else if (action === "number-color") {
+                const prop = button.getAttribute("data-value") as "fillColor" | "color" | "numberTextColor";
+                const picked = this.getObject(this.selectedId);
+                const pickedStyle = picked?.type === "number" ? picked.style : null;
+                const initial = prop === "fillColor"
+                    ? (pickedStyle?.fillColor ?? "#FFFFFF")
+                    : prop === "numberTextColor"
+                        ? (pickedStyle?.numberTextColor ?? pickedStyle?.color ?? this.current.color)
+                        : (pickedStyle?.color ?? this.current.color);
+                this.openColorPop(button as HTMLElement, {kind: "prop", prop}, initial);
+                return;
+            }
+            else if (action === "number-leader") {
+                this.setNumberLeader(button.getAttribute("data-value") === "on");
             }
             else if (action === "number-tip") {
                 this.closeNumberPickers();
@@ -1377,12 +1503,25 @@ export class AnnotEditor {
                 return;
             }
             const ctx = (event.target as HTMLElement | null)?.getAttribute?.("data-ctx");
+            // 字体是字符串，不走数值通道
+            if (ctx === "fontFamily") return;
             if (ctx) this.applyContextValue(ctx, Number((event.target as HTMLInputElement).value), false);
             readExtendInput(event.target);
             this.onPresetInput(event.target, false);
         }, {signal});
         this.root?.addEventListener("change", (event) => {
             const ctx = (event.target as HTMLElement | null)?.getAttribute?.("data-ctx");
+            if (ctx === "fontFamily") {
+                const select = event.target as HTMLSelectElement;
+                if (select.value === "__upload__") {
+                    // 选中「上传字体…」不是真的换字体，只是打开文件选择
+                    this.render();
+                    void this.pickFontFile();
+                    return;
+                }
+                this.applyFontFamily(select.value, true);
+                return;
+            }
             if (ctx) this.applyContextValue(ctx, Number((event.target as HTMLInputElement).value), true);
             readExtendInput(event.target);
             this.onPresetInput(event.target, true);
@@ -1427,6 +1566,12 @@ export class AnnotEditor {
                     this.cancelSmartTap();
                     this.gestureMode = "pending";
                     this.gestureLocked = true;
+                    // 文字工具下第一根手指可能已经点开了一个空输入框：
+                    // 双指是想缩放，把它撤掉，别留下一个空文字对象
+                    if (this.editingTextId && this.textEditor && !this.textEditor.value.trim()) {
+                        this.finishTextEdit();
+                        this.renderOverlay();
+                    }
                 } else {
                     this.enterPinch();
                 }
@@ -1510,6 +1655,10 @@ export class AnnotEditor {
         }
 
         this.stage?.addEventListener("wheel", (event) => {
+            // 悬浮条上的弹出层（字体面板、属性小窗、色轮）和文字输入框自己会滚动，
+            // 滚轮落在它们身上时不能顺手缩放画布 —— 否则选字体时滚一下画面就跑了
+            const wheelTarget = event.target as Element | null;
+            if (wheelTarget?.closest?.(WHEEL_SCROLL_SELECTOR)) return;
             event.preventDefault();
             const rect = this.stage?.getBoundingClientRect();
             if (!rect) return;
@@ -1675,7 +1824,22 @@ export class AnnotEditor {
         document.addEventListener("pointerdown", (event) => {
             if (!this.editingTextId || !this.textEditor) return;
             if (this.textEditor.contains(event.target as Node)) return;
+            // 触屏上第 2 根手指落下是在准备缩放：这一下不结束输入，也不许被拦掉，
+            // 否则文字工具下永远没法双指缩放画面。
+            const isTouch = (event as PointerEvent).pointerType === "touch";
+            if (isTouch && this.touchPoints.size >= 1) return;
+            const target = event.target as Element | null;
+            const onCanvas = !!target?.closest?.('[data-role="svg"], [data-role="stage"]');
             this.finishTextEdit();
+            if (!onCanvas) return;
+            if (isTouch) {
+                // 触屏：只吞掉这一笔的绘制（不新建文字），但**不拦事件**——
+                // 舞台还要靠这根手指判断是不是双指缩放
+                this.swallowPointer = (event as PointerEvent).pointerId ?? -1;
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
         }, {capture: true, signal});
         document.addEventListener("keydown", (e) => this.onKeyDown(e), {capture: true, signal});
     }
@@ -2019,8 +2183,11 @@ export class AnnotEditor {
         const copy = cloneGeometry(geometry);
         // 字号预设同时决定序号圆点大小
         if (type === "number") {
-            (copy as NumberGeometry).radius = Math.max(12, this.current.fontSize * 0.65);
-            (copy as NumberGeometry).format = this.current.numberFormat;
+            const n = copy as NumberGeometry;
+            n.radius = Math.max(12, this.current.fontSize * 0.65);
+            n.format = this.current.numberFormat;
+            n.bubble = this.current.numberBubble;
+            n.leader = this.current.numberLeader;
         }
         if (type === "magnifier") {
             const m = copy as MagnifierGeometry;
@@ -2046,6 +2213,7 @@ export class AnnotEditor {
         this.cornerPickerOpen = false;
         this.numberFormatOpen = false;
         this.numberStyleOpen = false;
+        this.fontPopOpen = false;
         this.toggleColorPop(false);
         this.activeTool = tool;
         // 对齐模式依附在「选择」工具上：换成画图工具就一起收掉
@@ -2213,6 +2381,8 @@ export class AnnotEditor {
         const geometry = object.geometry as TextGeometry;
         const editor = document.createElement("textarea");
         editor.className = "annot-text-editor";
+        // 输入框与画布上的文字用同一套字体，双击编辑时不会「跳字形」
+        editor.style.fontFamily = fontStackOf(object.style.fontFamily);
         editor.value = geometry.text;
         editor.spellcheck = false;
         // 允许自动换行：画布右边到哪就折到哪，和保存出来的排版一致
@@ -2475,6 +2645,9 @@ export class AnnotEditor {
                     geometry: {
                         center: {...start}, tip: null, control: null, number: 0,
                         radius: Math.max(12, this.current.fontSize * 0.65),
+                        // 拖动预览也要按当前样式画，否则松手前后形状会跳变
+                        bubble: this.current.numberBubble,
+                        leader: this.current.numberLeader,
                     },
                 };
             case "highlight":
@@ -2657,6 +2830,11 @@ export class AnnotEditor {
     // ---------------------------------------------------------------- 指针交互
     private onPointerDown(e: PointerEvent): void {
         if (e.button !== 0 || !this.svg) return;
+        // 这一笔只用来结束文字输入：跳过绘制，但手指照常被舞台记录（双指缩放要用）
+        if (e.pointerId === this.swallowPointer) {
+            this.swallowPointer = -1;
+            return;
+        }
         // 双指手势期间绝不绘制：touches>=2 时 stage 的捕获阶段已把事件拦下，
         // 这里再兜一层，防止某些内核里 pointerdown 绕过 stopPropagation 漏进来
         if (this.mobile && this.gestureMode !== "constrain" &&
@@ -2689,14 +2867,16 @@ export class AnnotEditor {
         }
         const handleEl = target?.closest?.("[data-handle]") ?? null;
         const objectEl = target?.closest?.("[data-object-id]") ?? null;
-        // 聚光灯 / 放大镜是「效果类」对象，画完常常要马上挪一挪。
-        // 这两个工具下按在同类对象身上时，当作「调它」而不是「再画一个」，
-        // 否则刚画完想拖动，结果又叠了一个新的。
         const under = objectEl ? this.getObject(objectEl.getAttribute("data-object-id")) : null;
-        const adjustExisting = !!under && (
-            this.activeTool === "select" ||
-            (this.activeTool === "spotlight" && under.type === "spotlight") ||
-            (this.activeTool === "magnifier" && under.type === "magnifier"));
+        // 同类型命中：拿着某个工具在画布上起手时，如果按下的位置正好落在**同类**已有对象身上，
+        // 就当作「要调这一个」而不是「再叠一个上去」——直接选中它，把参数栏切到它的属性。
+        // 不同类型不受影响（比如在矩形上画箭头，照常画）；想画新的，从对象外面起手即可。
+        // 判定走几何而不是 DOM：上层可能盖着别的类型，DOM 命中拿到的未必是同类那一个。
+        const hitObject = this.activeTool === "select"
+            ? under
+            : (this.findSameKindAt(this.activeTool, p) ?? under);
+        const adjustExisting = !!hitObject && (
+            this.activeTool === "select" || this.isSameKindTool(this.activeTool, hitObject.type));
 
         this.pendingTextEdit = null;
         this.pendingDeselect = null;
@@ -2760,7 +2940,16 @@ export class AnnotEditor {
                 rotation,
                 startAngle: Math.atan2(p.y - center.y, p.x - center.x) * 180 / Math.PI,
             };
-        } else if (this.activeTool === "text") {
+        } else if (this.activeTool === "text" && !adjustExisting) {
+            // 正在写文字时又点了别处：这一下只把当前这段收尾，不再叠一个新的空文字。
+            // 否则用户想结束输入，结果凭空多出一个空文字对象，还以为工具坏了。
+            // 判据用「输入框还在」而不是只看 editingTextId：两者在某些时序下会不同步
+            if (this.editingTextId || this.textEditor) {
+                e.preventDefault();
+                this.finishTextEdit();
+                this.render();
+                return;
+            }
             // 文字工具：点一下就创建对象并立刻进入输入态。
             // 先阻止默认行为，避免后续 mousedown 把焦点从输入框抢走。
             e.preventDefault();
@@ -2773,21 +2962,21 @@ export class AnnotEditor {
         } else if (this.activeTool === "line" && this.linePolyline && this.draft) {
             // 折线进行中：这一下只是「加一个折点」，不重开草稿
             this.drag = {kind: "lineClick", start: p};
-        } else if (adjustExisting && under && objectEl) {
-            const wasSelected = this.selectedId === under.id;
+        } else if (adjustExisting && hitObject) {
+            const wasSelected = this.selectedId === hitObject.id;
             // 多选状态下按住其中一个成员拖动：整组一起挪，选择也不能被收成单选
-            const inGroup = this.selectedIds.length > 1 && this.selectedIds.includes(under.id);
-            if (!inGroup) this.selectedId = under.id;
-            if (under.type === "magnifier" && this.hitsMagnifierAnchor(under, p)) {
-                const bounds = getBounds(under);
+            const inGroup = this.selectedIds.length > 1 && this.selectedIds.includes(hitObject.id);
+            if (!inGroup) this.selectedId = hitObject.id;
+            if (hitObject.type === "magnifier" && this.hitsMagnifierAnchor(hitObject, p)) {
+                const bounds = getBounds(hitObject);
                 this.drag = {
                     kind: "handle",
                     handle: "anchor",
                     start: p,
-                    original: cloneObject(under),
+                    original: cloneObject(hitObject),
                     originalBounds: bounds,
                     center: boundsCenter(bounds),
-                    rotation: (under.geometry as {rotation?: number}).rotation ?? 0,
+                    rotation: (hitObject.geometry as {rotation?: number}).rotation ?? 0,
                     startAngle: 0,
                 };
             } else {
@@ -2797,10 +2986,10 @@ export class AnnotEditor {
                         .filter((object): object is AnnotObject => Boolean(object))
                         .map((object) => cloneObject(object))
                     : undefined;
-                this.drag = {kind: "move", start: p, original: cloneObject(under), group};
+                this.drag = {kind: "move", start: p, original: cloneObject(hitObject), group};
                 // 已经选中的文字：这次只点不拖，就在抬起时进入编辑（拖仍然能移动它）
-                this.pendingTextEdit = under.type === "text" && wasSelected && !inGroup
-                    ? {id: under.id, start: p}
+                this.pendingTextEdit = hitObject.type === "text" && wasSelected && !inGroup
+                    ? {id: hitObject.id, start: p}
                     : null;
             }
         } else if (this.activeTool !== "select") {
@@ -2810,7 +2999,8 @@ export class AnnotEditor {
                 this.draft = draft;
                 this.draftPointer = {...p};
                 this.resetTouchHold();
-                this.selectedId = null;
+                // 这里**不**清选中：按下的一瞬可能只是双指缩放的第一根手指。
+                // 真开始画时（onPointerMove）再取消原来的选中，缩放就不会闪一下。
                 // 触屏画线要记轨迹，用来判断末端停顿 / 是否该自动拉直
                 this.lineTouch = this.mobile && this.activeTool === "line"
                     ? {samples: [{...p}], lastMoveAt: Date.now()}
@@ -2853,7 +3043,21 @@ export class AnnotEditor {
             // 部分环境不支持指针捕获
         }
         e.preventDefault();
-        this.render();
+        // 按下这一下只影响「选中是谁」和参数栏，**不必重建所有对象**。
+        // 原来这里调 render()，等于每按一次就把整层图形重新生成一遍：
+        // 双指缩放时第一根手指落下就会闪一下，画的对象越多越明显。
+        this.syncAfterPointerDown();
+    }
+
+    /** 按下后的轻量刷新：选中框、参数栏、侧栏、工具高亮，不碰对象层 */
+    private syncAfterPointerDown(): void {
+        this.renderOverlay();
+        this.renderToolbar();
+        this.renderPresetState();
+        this.renderContextBar();
+        this.renderMobileStyle();
+        this.renderMobileTopbar();
+        this.sidebar?.render(this.scene.objects, this.selectedIds, this.hoveredId);
     }
 
     /** 抬起时确认「刚才那一下是点空白」：没拖动才真的取消选中 */
@@ -2875,6 +3079,34 @@ export class AnnotEditor {
      */
     private get dragSlop(): number {
         return this.mobile ? 10 : 3;
+    }
+
+    /**
+     * 按坐标找「同类」的最上层对象：从数组末尾往前找，第一个命中的就是视觉上最上面那个。
+     * 命中范围跟渲染时的热区一致（外扩 6 个屏幕像素，换算成图片坐标），
+     * 放大镜额外算上它的锚点——锚点在包围盒外面。
+     */
+    private findSameKindAt(tool: string, p: Point): AnnotObject | null {
+        const pad = 6 / (this.viewport.zoom || 1);
+        for (let i = this.scene.objects.length - 1; i >= 0; i--) {
+            const object = this.scene.objects[i];
+            if (!this.isSameKindTool(tool, object.type)) continue;
+            if (object.type === "magnifier" && this.hitsMagnifierAnchor(object, p)) return object;
+            const b = getBounds(object);
+            if (p.x >= b.x - pad && p.x <= b.x + b.width + pad &&
+                p.y >= b.y - pad && p.y <= b.y + b.height + pad) return object;
+        }
+        return null;
+    }
+
+    /**
+     * 当前工具和这个对象是不是同一类。
+     * 高亮有「笔迹 / 矩形色块」两种画法，都归高亮，互相之间也按同类处理；
+     * 其余工具一一对应（矩形对矩形、箭头对箭头…）。
+     */
+    private isSameKindTool(tool: string, type: AnnotType): boolean {
+        if (tool === type) return true;
+        return tool === "highlight" && (type === "highlight" || type === "highlightRect");
     }
 
     /** 指针是否落在放大镜的锚点上（按屏幕像素判断，缩放后手感一致） */
@@ -2908,6 +3140,11 @@ export class AnnotEditor {
         }
 
         if (drag.kind === "draw" || drag.kind === "lineClick") {
+            // 真的开始画了才取消原来的选中。按下时先不清：
+            // 那一刻可能只是双指缩放的第一根手指，清了会让选中框闪一下又回来。
+            if (this.selectedIds.length || this.selectedId) {
+                this.selectedId = null;
+            }
             this.draftPointer = {...p};
             if (this.draft) {
                 const zoom = this.viewport.zoom || 1;
@@ -3352,6 +3589,7 @@ export class AnnotEditor {
         this.renderContextBar();
         this.renderMobileStyle();
         this.renderMobileTopbar();
+        this.renderMobileFontPop();
         this.syncMobileSheets();
         this.syncMobileZoom();
         this.syncMobileFabs();
@@ -3373,18 +3611,18 @@ export class AnnotEditor {
             case "line": return ["colors", "widths", "lines"];
             case "rect": return ["colors", "widths", "lines", "fills", "corners"];
             case "ellipse": return ["colors", "widths", "lines", "fills"];
+            // 字体与序号的编号 / 样式 / 端点都挪到顶部悬浮栏了，这一行只留通用外观
             case "text": return ["colors", "fonts"];
-            // 序号多两组：编号格式、引线端点（手机上也能改，不然默认为罗马数字就再也回不去）
-            case "number": return ["colors", "numbers", "fonts"];
+            case "number": return ["colors", "fonts"];
             case "highlight":
             // 矩形高亮只认「颜色 + 填充浓度」两样，粗细 / 线型对它没有意义
             case "highlightRect": return ["colors", "fills"];
-            // 马赛克 / 模糊：手机上也要能调参数，给一个紧凑滑块（v1.1.0-alpha.3）
+            // 马赛克 / 模糊 / 聚光灯：手机上也要能调参数，给一个紧凑滑块（v1.1.0-alpha.3）
             case "mosaic": return ["blockSize"];
             case "blur": return ["blurRadius"];
-            // 放大镜：镜框颜色 / 线宽有用；聚光灯没有现成的分组可复用，上栏给提示
+            case "spotlight": return ["spotlightOpacity"];
+            // 放大镜：镜框颜色 / 线宽有用
             case "magnifier": return ["colors", "widths"];
-            case "spotlight": return [];
             default: return ["colors", "widths", "lines"];
         }
     }
@@ -3428,24 +3666,6 @@ export class AnnotEditor {
             parts.push(`<div class="annot-mobile-style__group" data-group="fills">
                 <span class="annot-mobile-style__label">填充</span>${items}</div>`);
         }
-        if (groups.includes("numbers")) {
-            const picked = this.getObject(this.selectedId);
-            const numberObject = picked?.type === "number" ? picked : null;
-            const format = normalizeNumberFormat(numberObject
-                ? (numberObject.geometry as NumberGeometry).format : this.current.numberFormat);
-            const tip = normalizeNumberTip(numberObject ? numberObject.style.numberTip : this.current.numberTip);
-            const formatItems = NUMBER_FORMATS.map((item) => `
-                <button type="button" class="annot-mobile-chip${item.key === format ? " is-active" : ""}"
-                    data-action="number-format-pick" data-value="${item.key}"
-                    title="${item.label}" aria-label="${item.label}">${item.chip}</button>`).join("");
-            const tipItems = NUMBER_TIPS.map((item) => `
-                <button type="button" class="annot-mobile-chip${item.key === tip ? " is-active" : ""}"
-                    data-action="number-tip" data-value="${item.key}"
-                    title="${item.hint}" aria-label="${item.label}">${item.label}</button>`).join("");
-            parts.push(`<div class="annot-mobile-style__group" data-group="numbers">
-                <span class="annot-mobile-style__label">编号</span>${formatItems}
-                <span class="annot-mobile-style__label">端点</span>${tipItems}</div>`);
-        }
         if (groups.includes("corners")) {
             // 手机屏窄，只给五档最常用的（直角 / 4 / 8 / 16 / 24）
             const items = MOBILE_CORNER_STEPS.map((value) => `
@@ -3461,25 +3681,44 @@ export class AnnotEditor {
             parts.push(`<div class="annot-mobile-style__group" data-group="fonts">
                 <span class="annot-mobile-style__label">字号</span>${items}</div>`);
         }
-        // 马赛克块大小 / 模糊程度：手机屏窄，滑块压到 96px，数值跟在右边
-        if (groups.includes("blockSize") || groups.includes("blurRadius")) {
-            const isBlur = groups.includes("blurRadius");
-            const key = isBlur ? "blurRadius" : "blockSize";
+        // 滑块类参数（马赛克块大小 / 模糊程度 / 聚光灯暗度）：
+        // 这三种工具在手机上就这一个参数，滑块按整行宽度撑满，右侧不留空，视觉才对称
+        if (groups.includes("blockSize") || groups.includes("blurRadius") || groups.includes("spotlightOpacity")) {
+            const key = groups.includes("spotlightOpacity")
+                ? "spotlightOpacity"
+                : (groups.includes("blurRadius") ? "blurRadius" : "blockSize");
             const object = this.getObject(this.selectedId);
-            let value = isBlur ? this.contextDefaults.blurRadius : this.contextDefaults.blockSize;
-            if (isBlur && object?.type === "blur") {
-                value = (object.geometry as BlurGeometry).radius ?? value;
-            } else if (!isBlur && object?.type === "mosaic") {
-                value = (object.geometry as MosaicGeometry).blockSize ?? value;
+            let value: number;
+            let min = 4;
+            let max = 48;
+            let label = "块大小";
+            if (key === "blurRadius") {
+                min = 2;
+                max = MAX_BLUR_RADIUS;
+                label = "模糊程度";
+                value = object?.type === "blur"
+                    ? ((object.geometry as BlurGeometry).radius ?? this.contextDefaults.blurRadius)
+                    : this.contextDefaults.blurRadius;
+            } else if (key === "spotlightOpacity") {
+                min = 10;
+                max = 95;
+                label = "暗度";
+                value = (object?.type === "spotlight"
+                    ? object.style.spotlightOpacity ?? this.current.spotlightOpacity
+                    : this.current.spotlightOpacity) * 100;
+            } else {
+                value = object?.type === "mosaic"
+                    ? ((object.geometry as MosaicGeometry).blockSize ?? this.contextDefaults.blockSize)
+                    : this.contextDefaults.blockSize;
             }
             value = Math.round(value);
-            const label = isBlur ? "模糊程度" : "块大小";
+            const suffix = key === "spotlightOpacity" ? "%" : "";
             parts.push(`<div class="annot-mobile-style__group annot-mobile-style__group--slider" data-group="${key}">
                 <span class="annot-mobile-style__label">${label}</span>
                 <input type="range" class="annot-mobile-range" data-ctx="${key}"
-                    min="${isBlur ? 2 : 4}" max="${isBlur ? MAX_BLUR_RADIUS : 48}" value="${value}"
+                    min="${min}" max="${max}" value="${value}"
                     aria-label="${label}">
-                <b class="annot-mobile-range__value" data-role="m-${key}">${value}</b>
+                <b class="annot-mobile-range__value" data-role="m-${key}">${value}${suffix}</b>
             </div>`);
         }
         if (groups.includes("ratios")) {
@@ -3491,11 +3730,8 @@ export class AnnotEditor {
                 <span class="annot-mobile-style__label">比例</span>${items}</div>`);
         }
         if (!parts.length) {
-            const hint = this.activeTool === "mosaic" || this.activeTool === "blur"
-                ? "这个工具没有可调参数：直接在图上拖出要处理的范围"
-                : "上栏会跟着当前工具显示颜色、粗细、填充和字号";
             parts.push(`<div class="annot-mobile-style__group annot-mobile-style__group--hint" data-group="hint">
-                <span class="annot-mobile-style__hint">${hint}</span></div>`);
+                <span class="annot-mobile-style__hint">上栏会跟着当前工具显示颜色、粗细、填充和字号</span></div>`);
         }
         return parts.join("");
     }
@@ -3530,7 +3766,11 @@ export class AnnotEditor {
             }
             const hidden = this.mobileViewportBase - viewport.height;
             const editing = !!this.editingTextId;
-            const open = hidden > 120 || (editing && hidden > 40);
+            // 判据从「高度差」换成「输入框还握着焦点」：
+            // 键盘高度在部分 WebView 里测不准，但「光标还在输入框里」是可靠的 ——
+            // 一旦用户收起键盘（输入框失焦）就立刻把三栏放回来，不至于卡在没法操作的状态。
+            const focusedEditor = editing && document.activeElement === this.textEditor;
+            const open = focusedEditor || hidden > 120;
             if (open && !this.root.classList.contains("is-keyboard")) {
                 // 锁的是「键盘弹之前」的高度（mobileViewportBase）。
                 // 不能用实时测量：resize 事件到达时布局已经缩过了，量出来就是缩小后的值。
@@ -3547,9 +3787,21 @@ export class AnnotEditor {
                 this.root.style.removeProperty("--annot-lock-stage");
             }
             // 画布本身一格不动，只把正在输入的文本框抬到键盘上方
-            this.liftTextEditor(open ? Math.max(0, hidden) : 0);
+            // （抬多少由 liftTextEditor 按可视区现算，这里只告诉它「键盘可能是开着的」）
+            this.liftTextEditor(open ? 1 : 0);
         };
         this.keyboardSync = sync;
+        // 兜底：部分 WebView 要等键盘动画结束才更新 visualViewport，甚至压根不发 resize。
+        // 输入框获得 / 失去焦点时补采几次（0 / 260 / 620ms），保证「弹键盘 → 收起三栏」一定发生。
+        const nudge = (): void => {
+            sync();
+            window.setTimeout(sync, 260);
+            window.setTimeout(sync, 620);
+        };
+        document.addEventListener("focusin", () => {
+            if (this.editingTextId) nudge();
+        }, {signal: this.abort.signal});
+        document.addEventListener("focusout", () => nudge(), {signal: this.abort.signal});
         viewport.addEventListener("resize", sync, {signal: this.abort.signal});
         viewport.addEventListener("scroll", sync, {signal: this.abort.signal});
         // 有些设备只发 window.resize（不发 visualViewport），两个都听
@@ -3573,13 +3825,24 @@ export class AnnotEditor {
             editor.style.transform = "";
             if (this.textFrame) this.textFrame.style.transform = "";
         };
-        if (lift <= 0) { clear(); return; }
+        // 先归零再测量：transform 会被算进 getBoundingClientRect，
+        // 不归零的话每来一次 sync 就在上一次的位移上再补一次，越抬越偏（这就是「错位」的来源）。
+        clear();
+        if (lift <= 0) return;
         const stageRect = this.stage?.getBoundingClientRect();
-        if (!stageRect) { clear(); return; }
+        if (!stageRect) return;
+        // 可视区底边（屏幕坐标）：键盘弹起后就是键盘上沿
+        const viewport = window.visualViewport;
+        const visibleBottom = (viewport
+            ? viewport.height + (viewport.offsetTop || 0)
+            : window.innerHeight) - 8;
         const box = editor.getBoundingClientRect();
+        // 只补「超出可视区的那一截」；输入框本来就没被挡住时一格都不动
+        const overflow = box.bottom - visibleBottom;
+        if (overflow <= 0) return;
         // 最多抬到「输入框顶边贴着舞台上沿」，再抬就看不见了
-        const delta = Math.max(0, Math.min(lift, box.top - stageRect.top - 8));
-        if (delta <= 0) { clear(); return; }
+        const delta = Math.max(0, Math.min(overflow, box.top - stageRect.top - 8));
+        if (delta <= 0) return;
         editor.style.transform = `translateY(${-delta}px)`;
         if (this.textFrame) this.textFrame.style.transform = `translateY(${-delta}px)`;
     }
@@ -3652,6 +3915,10 @@ export class AnnotEditor {
 
     /** 双指介入时把「正在画 / 正在拖 / 正在编辑」的东西全部丢掉（草稿不提交，等于撤销） */
     private abortCurrentGesture(): void {
+        // 有没有正在进行的「画 / 拖」决定要不要重画对象层：
+        // 单纯双指缩放时没有草稿，只需要补一次选中框，
+        // 整幅重建会让画面闪一下（画的对象越多越明显）。
+        const hadDraft = !!(this.draft || this.drag);
         this.clearTouchHold();
         this.resetTouchHold();
         this.drag = null;
@@ -3666,7 +3933,8 @@ export class AnnotEditor {
         this.cropLastPoint = null;
         this.panDrag = null;
         this.finishTextEdit();
-        this.render();
+        if (hadDraft) this.renderCanvas();
+        else this.renderOverlay();
     }
 
     /** 收起底部对象抽屉（拖动抓手 / 点画布两条路径共用） */
@@ -3711,10 +3979,14 @@ export class AnnotEditor {
         this.forceShift = false;
         this.gestureDriveId = null;
         this.abortCurrentGesture();
-        // 第一根手指起笔时把选中清了，这里还回去：缩放画面不该改变选中的是谁
+        // 第一根手指起笔时把选中清了，这里还回去：缩放画面不该改变选中的是谁。
+        // 只补画选中框和参数栏，**不整幅重建**——缩放过程中重建所有对象会闪一下。
         if (this.selectedIds.length === 0 && this.selectionBeforeGesture?.length) {
             this.selectedIds = [...this.selectionBeforeGesture];
-            this.render();
+            this.renderOverlay();
+            this.renderContextBar();
+            this.renderMobileStyle();
+            this.sidebar?.render(this.scene.objects, this.selectedIds, this.hoveredId);
         }
         const [a, b] = Array.from(this.touchPoints.values());
         if (!a || !b) return;
@@ -3801,6 +4073,7 @@ export class AnnotEditor {
             const alignKey = `align|${this.selectedIds.length}`;
             if (alignKey !== this.mobileStyleKey) {
                 this.mobileStyleKey = alignKey;
+                host.classList.remove("annot-mobile-style__scroll--fill");
                 host.innerHTML = this.buildMobileAlignRow();
                 host.scrollLeft = 0;
             }
@@ -3814,13 +4087,22 @@ export class AnnotEditor {
               `${normalizeNumberTip(object?.type === "number" ? object.style.numberTip : this.current.numberTip)}`
             : "";
         // 带上对象 id：同类对象互相切换时也要重建，否则滑块会停在上一块的数值上
+        // 字体面板的展开状态与当前字体也要进 key，否则点开面板时上栏不重建、面板不出现
+        const fontState = `${this.fontPopOpen ? "1" : "0"}:` +
+            (object?.type === "text" ? object.style.fontFamily ?? "" : this.current.fontFamily ?? "");
         const key = `${this.cropMode ? "crop" : this.activeTool}|` +
             `${object?.type ?? (this.activeTool === "select" ? "" : this.activeTool)}|` +
-            `${object?.id ?? ""}|${groups.join(",")}|${numberState}`;
+            `${object?.id ?? ""}|${groups.join(",")}|${numberState}|${fontState}`;
         if (key !== this.mobileStyleKey) {
             this.mobileStyleKey = key;
+            // 同理：整排重建后要滚回原来的位置，否则点一下选项就跳回最左边
+            const keepScroll = host.scrollLeft;
             host.innerHTML = this.buildMobileStyleGroups(groups);
-            host.scrollLeft = 0;
+            // 整栏只有一个滑块时让它撑满整行（马赛克 / 模糊 / 聚光灯），右侧不留空
+            host.classList.toggle("annot-mobile-style__scroll--fill",
+                groups.length === 1 && (groups[0] === "blockSize" || groups[0] === "blurRadius"
+                    || groups[0] === "spotlightOpacity"));
+            host.scrollLeft = keepScroll;
         }
         // 点完色点 / 粗细后重新标高亮（与 PC 共用同一套 data-preset 判定）
         this.renderPresetState();
@@ -3830,8 +4112,8 @@ export class AnnotEditor {
     // ---------------------------------------------------------------- 顶部悬浮参数栏
     /**
      * 顶部栏该出哪几枚按钮：跟当前工具 / 选中对象走，一栏对应 PC 悬浮条上的一类参数。
-     * 手机上一屏只留最常用的枚举型参数；马赛克块大小、模糊程度、聚光灯暗度这些滑块
-     * 仍只在 PC 上调（手机上塞进气泡要额外占一行滑块，收益不大）。
+     * 手机上一屏只留最常用的枚举型参数；滑块（马赛克块大小 / 模糊程度 / 聚光灯暗度）
+     * 走下面的「上栏」而不是这里，因为一条滑块占不满一行、塞进气泡反而多一次点击。
      */
     private mobileTopItems(): MobileTopItem[] {
         // 抽屉打开时顶栏照常保留：改对象属性仍然要用它（抽屉只盖住底部）
@@ -3915,25 +4197,90 @@ export class AnnotEditor {
                     ? (picked.geometry as NumberGeometry).format : this.current.numberFormat);
                 const tip = normalizeNumberTip(picked?.type === "number"
                     ? picked.style.numberTip : this.current.numberTip);
+                const bubble: NumberBubble = picked?.type === "number"
+                    ? normalizeNumberBubble((picked.geometry as NumberGeometry).bubble)
+                    : this.current.numberBubble;
+                const leaderOn = picked?.type === "number"
+                    ? (picked.geometry as NumberGeometry).leader !== false : this.current.numberLeader;
+                const roundOn = picked?.type === "number"
+                    ? picked.style.bubbleRound !== false : this.current.numberRound;
+                const meta = NUMBER_BUBBLES.find((one) => one.key === bubble) ?? NUMBER_BUBBLES[0];
                 const item = NUMBER_FORMATS.find((one) => one.key === format) ?? NUMBER_FORMATS[0];
+                // 样式排第一：四种画法完全不同，先定这个再定别的；点开出四个缩略图
+                items.push({
+                    key: "numberBubble",
+                    label: meta.short,
+                    icon: this.numberStyleIcon(bubble),
+                    title: `样式：${meta.label}，点一下换别的`,
+                });
                 items.push({
                     key: "numberFormat",
                     label: "编号",
                     icon: `<span class="annot-mobile-topbar__char">${item.chip}</span>`,
                     title: `编号格式：${item.short}`,
                 });
-                items.push({
-                    key: "numberTip", label: "端点",
-                    icon: TB_TIP_ICONS[tip] ?? TB_TIP_ICONS.arrow,
-                    title: "引线端点",
-                });
-                if (tip === "arrow") {
+                const fill = (picked?.type === "number" ? picked.style.fillColor : undefined) ?? "#FFFFFF";
+                const fillItem = {
+                    key: "numberFill", label: "填充",
+                    icon: `<span class="annot-mobile-topbar__dot" style="background:${fill}"></span>`,
+                    action: "number-color", value: "fillColor",
+                    title: "气泡内部填充色",
+                };
+                // 端点 + 箭头样式：实心圆 / 空心圆 / 纯数字都靠它拉引线
+                const pushTip = (): void => {
                     items.push({
-                        key: "arrowStyle", label: "样式",
-                        icon: ARROW_STYLE_ICONS[arrowKey], title: "引线箭头样式",
+                        key: "numberTip", label: "端点",
+                        icon: TB_TIP_ICONS[tip] ?? TB_TIP_ICONS.arrow,
+                        title: "引线端点",
                     });
+                    if (tip === "arrow") {
+                        items.push({
+                            key: "arrowStyle", label: "样式",
+                            icon: ARROW_STYLE_ICONS[arrowKey], title: "引线箭头样式",
+                        });
+                    }
+                };
+                if (bubble === "pointer") {
+                    // 定位气泡：端点那套不适用，换成引线 / 圆头 / 填充
+                    items.push({
+                        key: "numberLeader", label: "引线",
+                        on: leaderOn,
+                        icon: leaderOn ? TB_LEADER_ON : TB_LEADER_OFF,
+                        action: "number-leader-toggle",
+                        title: leaderOn ? "引线：开，点一下关掉" : "引线：关，点一下打开",
+                    });
+                    items.push({
+                        key: "numberRound", label: "圆头",
+                        on: roundOn,
+                        icon: roundOn ? TB_ROUND_ON : TB_ROUND_OFF,
+                        action: "number-round-toggle",
+                        title: roundOn ? "圆头：尖头与引线是圆端，点一下变尖角" : "尖角：点一下变圆头",
+                    });
+                    items.push(fillItem);
+                } else if (bubble === "hollow") {
+                    // 空心圆：白底 + 描边，内部颜色只由「填充」取色器控制，没有透明档
+                    items.push(fillItem);
+                    pushTip();
+                } else if (bubble === "plain") {
+                    pushTip();
+                } else {
+                    pushTip();
+                    pushRound(arrowRound, "arrow");
                 }
-                pushRound(arrowRound, "arrow");
+                break;
+            }
+            case "text": {
+                // 字体挪到顶栏：手机上不再挤在底部第二行里
+                const family = picked?.type === "text" ? picked.style.fontFamily : this.current.fontFamily;
+                const full = fontLabelOf(family);
+                items.push({
+                    key: "font",
+                    label: full.startsWith("默认") ? "默认" : full.length > 5 ? `${full.slice(0, 4)}…` : full,
+                    icon: `<span class="annot-mobile-topbar__char">字</span>`,
+                    on: this.fontPopOpen,
+                    action: "font-pop",
+                    title: `字体：${full}`,
+                });
                 break;
             }
             case "magnifier": {
@@ -4004,6 +4351,14 @@ export class AnnotEditor {
                 `<span class="annot-mobile-topbar__char">${item.chip}</span>`,
                 item.key === active, item.label)).join("");
         }
+        if (key === "numberBubble") {
+            // 四种样式各画一枚真实缩略图，顺序与顶部栏一致
+            const active = picked?.type === "number"
+                ? normalizeNumberBubble((picked.geometry as NumberGeometry).bubble)
+                : this.current.numberBubble;
+            return NUMBER_BUBBLES.map((item) => cell("number-bubble", item.key,
+                this.numberStyleIcon(item.key), item.key === active, item.label)).join("");
+        }
         if (key === "numberTip") {
             const active = normalizeNumberTip(picked?.type === "number"
                 ? picked.style.numberTip : this.current.numberTip);
@@ -4064,16 +4419,53 @@ export class AnnotEditor {
             + `#${this.mobilePopKey ?? ""}`;
         if (fingerprint === this.mobileTopKey) return;
         this.mobileTopKey = fingerprint;
+        // 重建会把 scrollLeft 清零：先记下来，画完滚回去，别让整条栏弹回最左
+        const keepScroll = bar.scrollLeft;
         bar.innerHTML = items.map((item) => `
             <button type="button" class="annot-mobile-topbar__btn${
                 item.key === this.mobilePopKey ? " is-open" : ""}${item.on ? " is-on" : ""}"
                 data-action="${item.action ?? "mobile-pop"}"${
-                item.action ? "" : ` data-pop="${item.key}"`}
+                item.action ? "" : ` data-pop="${item.key}"`}${
+                item.value === undefined ? "" : ` data-value="${item.value}"`}
                 aria-expanded="${item.key === this.mobilePopKey}" title="${item.title}">
                 ${item.icon}<span>${item.label}</span></button>`).join("")
             + (this.mobilePopKey ? `<div class="annot-mobile-pop" data-role="mobile-pop">${
                 this.mobilePopBody(this.mobilePopKey)}</div>` : "");
         this.positionMobilePop();
+        if (keepScroll) bar.scrollLeft = keepScroll;
+    }
+
+    /**
+     * 手机上的字体面板。
+     *
+     * 不能像以前那样塞进上栏里：上栏是横向滚动容器，里面的分组还带毛玻璃，
+     * 会给里面的定位元素另建包含块，面板一出来就被裁掉 —— 这就是「点了没反应」。
+     * 现在挂到 .annot-root 下，按顶栏底部定位，铺在画布上方。
+     */
+    private renderMobileFontPop(): void {
+        if (!this.mobile || !this.root) return;
+        const host = this.root.querySelector<HTMLElement>('[data-role="mobile-font-host"]');
+        const picked = this.getObject(this.selectedId);
+        const typing = this.activeTool === "text" || picked?.type === "text";
+        if (!this.fontPopOpen || !typing) {
+            host?.remove();
+            return;
+        }
+        const box = host ?? document.createElement("div");
+        if (!host) {
+            box.dataset.role = "mobile-font-host";
+            box.className = "annot-font-host";
+            this.root.append(box);
+        }
+        const current = (picked?.type === "text" ? picked.style.fontFamily : this.current.fontFamily) ?? "";
+        box.innerHTML = this.fontPopHtml(current, true);
+        const anchor = this.root.querySelector<HTMLElement>('[data-role="mobile-topbar"]');
+        const rootTop = this.root.getBoundingClientRect().top;
+        const top = anchor && !anchor.hidden
+            ? Math.round(anchor.getBoundingClientRect().bottom - rootTop + 8)
+            : 60;
+        const pop = box.firstElementChild as HTMLElement | null;
+        if (pop) pop.style.top = `${top}px`;
     }
 
     /** 气泡水平居中于整条栏，尖角单独指回被点的那枚按钮 */
@@ -4950,7 +5342,11 @@ export class AnnotEditor {
             this.paintCustomBall(hex);
             this.syncColorPresetActive();
         } else if (target.kind === "prop") {
-            this.applyProperty({[target.prop]: hex} as PropertyPatch, commit);
+            if (target.prop === "fillColor" || target.prop === "numberTextColor") {
+                this.applyNumberColor(target.prop, hex, commit);
+            } else {
+                this.applyProperty({[target.prop]: hex} as PropertyPatch, commit);
+            }
         } else {
             this.extendState.custom1 = hex;
             this.extendState.slot = "custom1";
@@ -5682,6 +6078,11 @@ export class AnnotEditor {
                         data-action="highlight-mode" data-value="${item.key}" title="${item.hint}"
                         aria-pressed="${item.key === mode}">${item.label}</button>`).join("") +
                 `</div>`;
+        } else if (type === "text") {
+            // 字体：点开是面板——顶上一个醒目上传按钮，下面依次是自定义字体、系统字体
+            const pickedText = selected?.type === "text" ? selected : null;
+            html = `<span class="annot-context__title">文字</span>` +
+                this.fontTriggerHtml(pickedText ? pickedText.style.fontFamily : this.current.fontFamily, false);
         } else if (type === "mosaic") {
             const size = selected ? (selected.geometry as MosaicGeometry).blockSize : this.contextDefaults.blockSize;
             // 透明度对马赛克意义不大（它本来就是盖住内容），PC 悬浮条只留块大小
@@ -5747,32 +6148,55 @@ export class AnnotEditor {
             const tip = normalizeNumberTip(numberObject ? numberObject.style.numberTip : this.current.numberTip);
             const rounded = numberObject
                 ? numberObject.style.arrowRounded !== false : this.current.arrowRounded;
+            // 气泡样式：实心圆 / 空心圆 / 定位气泡 / 纯数字，四枚只放缩略图，名字进 tooltip
+            const bubble = numberObject
+                ? normalizeNumberBubble((numberObject.geometry as NumberGeometry).bubble)
+                : this.current.numberBubble;
+            const leaderOn = numberObject
+                ? (numberObject.geometry as NumberGeometry).leader !== false : this.current.numberLeader;
+            const roundOn = numberObject
+                ? numberObject.style.bubbleRound !== false : this.current.numberRound;
+            const bubbleChips = `<span class="annot-context__title">样式</span>` +
+                `<div class="annot-context__chips" role="group" aria-label="序号样式">` +
+                NUMBER_BUBBLES.map((item) => `
+                    <button type="button" class="annot-context__chip annot-context__chip--bubble${
+                        bubble === item.key ? " is-active" : ""}"
+                        data-action="number-bubble" data-value="${item.key}"
+                        title="${item.label}" aria-label="${item.label}"
+                        aria-pressed="${bubble === item.key}">${
+                        this.numberStyleIcon(item.key)}</button>`).join("") +
+                `</div>`;
+            const roundChips = `<span class="annot-context__title">圆头</span>` +
+                `<div class="annot-context__chips" role="group" aria-label="尖头与引线端帽">` +
+                `<button type="button" class="annot-context__chip${roundOn ? " is-active" : ""}"
+                    data-action="number-round" data-value="on" aria-pressed="${roundOn}"
+                    title="尖头与引线末端是圆润的圆头">圆</button>` +
+                `<button type="button" class="annot-context__chip${roundOn ? "" : " is-active"}"
+                    data-action="number-round" data-value="off" aria-pressed="${!roundOn}"
+                    title="保持锐利的尖角与平口">尖</button>` +
+                `</div>`;
+            const leaderChips = `<span class="annot-context__title">引线</span>` +
+                `<div class="annot-context__chips" role="group" aria-label="引线开关">` +
+                `<button type="button" class="annot-context__chip${leaderOn ? " is-active" : ""}"
+                    data-action="number-leader" data-value="on" aria-pressed="${leaderOn}"
+                    title="尖头之外再拉一条细引线">开</button>` +
+                `<button type="button" class="annot-context__chip${leaderOn ? "" : " is-active"}"
+                    data-action="number-leader" data-value="off" aria-pressed="${!leaderOn}"
+                    title="只保留尖头，不拉引线">关</button>` +
+                `</div>`;
+            const numberStyle = numberObject?.style;
+            const swatch = (prop: string, hex: string, title: string): string =>
+                `<button type="button" class="annot-swatch" data-action="number-color" data-value="${prop}"
+                    title="${title}" aria-label="${title}" style="background:${hex}"></button>`;
+            // 只留「填充」：边框与文字都跟随顶栏的主颜色；空心圆内部也是实色，不做透明档
+            const fillChips = `<span class="annot-context__title">填充</span>` +
+                swatch("fillColor", numberStyle?.fillColor ?? "#FFFFFF", "气泡内部填充色");
             const formatItem = NUMBER_FORMATS.find((item) => item.key === format) ?? NUMBER_FORMATS[0];
             const style = normalizeArrowStyle(
                 numberObject ? numberObject.style.numberArrowStyle : this.current.numberArrowStyle);
             const styleLabel = ARROW_STYLES.find((item) => item.key === style)?.label ?? "经典";
-            html = `<span class="annot-context__title">序号</span>` +
-                // 编号格式：下拉框（按钮上写「名称 + 一个样子」）
-                `<div class="annot-arrow-picker annot-picker--text${this.numberFormatOpen ? " is-open" : ""}"
-                    data-role="number-format-picker">` +
-                `<button type="button" class="annot-arrow-picker__button" data-action="number-format-toggle" ` +
-                `aria-haspopup="listbox" aria-expanded="${this.numberFormatOpen}" title="编号的显示格式">` +
-                `<span class="annot-arrow-picker__label">${formatItem.short}</span>` +
-                `<span class="annot-arrow-picker__icon annot-arrow-picker__icon--chip"
-                    data-role="number-format-chip" aria-hidden="true">${formatItem.chip}</span>` +
-                CHEVRON_DOWN_ICON +
-                `</button>` +
-                `<div class="annot-arrow-picker__menu" role="listbox" aria-label="编号格式">` +
-                NUMBER_FORMATS.map((item) => `
-                    <button type="button" class="annot-arrow-picker__item${item.key === format ? " is-active" : ""}"
-                        role="option" aria-selected="${item.key === format}"
-                        data-action="number-format-pick" data-value="${item.key}" title="${item.label}">
-                        <span class="annot-arrow-picker__item-label">${item.short}</span>
-                        <span class="annot-arrow-picker__icon annot-arrow-picker__icon--chip"
-                            aria-hidden="true">${item.chip}</span>
-                    </button>`).join("") +
-                `</div></div>` +
-                `<span class="annot-context__title">端点</span>` +
+            // 端点 + 箭头样式 + 圆线：实心圆 / 空心圆 / 纯数字都复用它
+            const tipBlock = `<span class="annot-context__title">端点</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="引线端点">` +
                 NUMBER_TIPS.map((item) => `
                     <button type="button" class="annot-context__chip${item.key === tip ? " is-active" : ""}"
@@ -5802,6 +6226,31 @@ export class AnnotEditor {
                             data-action="arrow-rounded" aria-pressed="${rounded}"
                             title="线端与折角是否圆润：开了是圆线，关掉是方头尖角">圆线</button>`
                     : "");
+            html = `<span class="annot-context__title">序号</span>` +
+                // 编号格式：下拉框（按钮上写「名称 + 一个样子」）
+                `<div class="annot-arrow-picker annot-picker--text${this.numberFormatOpen ? " is-open" : ""}"
+                    data-role="number-format-picker">` +
+                `<button type="button" class="annot-arrow-picker__button" data-action="number-format-toggle" ` +
+                `aria-haspopup="listbox" aria-expanded="${this.numberFormatOpen}" title="编号的显示格式">` +
+                `<span class="annot-arrow-picker__label">${formatItem.short}</span>` +
+                `<span class="annot-arrow-picker__icon annot-arrow-picker__icon--chip"
+                    data-role="number-format-chip" aria-hidden="true">${formatItem.chip}</span>` +
+                CHEVRON_DOWN_ICON +
+                `</button>` +
+                `<div class="annot-arrow-picker__menu" role="listbox" aria-label="编号格式">` +
+                NUMBER_FORMATS.map((item) => `
+                    <button type="button" class="annot-arrow-picker__item${item.key === format ? " is-active" : ""}"
+                        role="option" aria-selected="${item.key === format}"
+                        data-action="number-format-pick" data-value="${item.key}" title="${item.label}">
+                        <span class="annot-arrow-picker__item-label">${item.short}</span>
+                        <span class="annot-arrow-picker__icon annot-arrow-picker__icon--chip"
+                            aria-hidden="true">${item.chip}</span>
+                    </button>`).join("") +
+                `</div></div>` +
+                bubbleChips +
+                (bubble === "pointer" ? leaderChips + roundChips + fillChips
+                : bubble === "hollow" ? fillChips + tipBlock
+                : tipBlock);
         } else if (type === "arrow") {
             // 显示值必须和「改动目标」一致：选中的那支优先，没选中才显示默认样式
             const picked = this.getObject(this.selectedId);
@@ -6148,6 +6597,105 @@ export class AnnotEditor {
     }
 
     /**
+     * 样式切换按钮的图标：完全独立的黑白灰小图（editor/numberIcon.ts），
+     * 不走画布渲染，也不吃当前标注的颜色 / 字号 / 线宽 —— 以后调图标不会碰到画布。
+     */
+    private numberStyleIcon(bubble: NumberBubble): string {
+        const cached = this.numberIconCache.get(bubble);
+        if (cached) return cached;
+        const svg = numberStyleIconSvg(bubble);
+        this.numberIconCache.set(bubble, svg);
+        return svg;
+    }
+
+    /** 字体按钮 +（展开时）面板 */
+    private fontTriggerHtml(current: string | undefined, mobile: boolean): string {
+        const label = this.escapeFont(fontLabelOf(current));
+        const open = this.fontPopOpen;
+        const trigger = `<button type="button" class="${mobile ? "annot-mobile-font" : "annot-context__arrow annot-context__font"}${open ? " is-open" : ""}"
+            data-action="font-pop" aria-haspopup="listbox" aria-expanded="${open}" title="字体：${label}">
+            <span class="annot-font-name">${label}</span>
+            <span class="annot-font-caret" aria-hidden="true">▾</span></button>`;
+        return `<div class="annot-font-wrap">${trigger}${open ? this.fontPopHtml(current, mobile) : ""}</div>`;
+    }
+
+    /**
+     * 字体面板：顶部是醒目的「＋ 上传字体」，按钮本身就是分隔线；
+     * 下面紧跟自定义字体，再往下是「系统字体」标题 + 系统字体列表。
+     */
+    private fontPopHtml(current: string | undefined, mobile: boolean): string {
+        const value = current ?? "";
+        const item = (family: string, label: string): string =>
+            `<button type="button" class="annot-font-item${family === value ? " is-active" : ""}"
+                role="option" aria-selected="${family === value}" data-action="font-pick"
+                data-value="${this.escapeFont(family)}">${this.escapeFont(label)}</button>`;
+        const mine = this.uploadedFonts.map((font) => item(font.family, font.label)).join("");
+        const systems = this.systemFonts.map((font) => item(font.family, font.label)).join("");
+        return `<div class="annot-font-pop${mobile ? " annot-font-pop--mobile" : ""}" data-role="font-pop"
+            role="listbox" aria-label="字体">
+            <button type="button" class="annot-font-upload" data-action="font-upload">
+                <span class="annot-font-plus" aria-hidden="true">＋</span>上传字体</button>
+            ${mine ? `<div class="annot-font-list">${mine}</div>` : ""}
+            <div class="annot-font-list annot-font-list--default">${item("", defaultFontLabel())}</div>
+            <div class="annot-font-sep">系统字体</div>
+            <div class="annot-font-list">${systems || `<div class="annot-font-empty">没有读到系统字体</div>`}</div>
+        </div>`;
+    }
+
+    /** 字体名可能带引号 / 与号，直接拼 HTML 要转义 */
+    private escapeFont(text: string): string {
+        return text
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    /**
+     * 换字体：选中文字就改它，没选中就只改「下一次要用的默认字体」。
+     * 存的是档位键（不是字体栈），所以思源换主题、换字体时旧文字也跟着走。
+     */
+    private applyFontFamily(key: string, commit: boolean): void {
+        this.current.fontFamily = key;
+        saveCurrentStyle(this.current);
+        const object = this.getObject(this.selectedId);
+        if (object?.type === "text") {
+            object.style.fontFamily = key;
+            object.meta.updatedAt = Date.now();
+            if (commit) this.commit();
+        }
+        this.render();
+    }
+
+    /**
+     * 选一个字体文件上传：存进思源数据目录（跟着同步，多端可用），
+     * 立刻注册到当前文档并选中它。插件包里不含字体，包体积不变。
+     */
+    private async pickFontFile(): Promise<void> {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".ttf,.otf,.woff,.woff2";
+        input.style.cssText = "position:fixed;left:-9999px;top:0;";
+        document.body.appendChild(input);
+        const file = await new Promise<File | null>((resolve) => {
+            input.addEventListener("change", () => resolve(input.files?.[0] ?? null), {once: true});
+            input.addEventListener("cancel", () => resolve(null), {once: true});
+            input.click();
+        });
+        input.remove();
+        if (!file) return;
+        try {
+            const entry = await uploadFontFile(file);
+            this.uploadedFonts = [...this.uploadedFonts.filter((item) => item.family !== entry.family), entry]
+                .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans-CN"));
+            this.applyFontFamily(entry.family, true);
+        } catch (error) {
+            // 具体原因由 uploadFontFile 给出（格式不对 / 太大 / 文件损坏），不要笼统提示
+            showMessage(error instanceof FontUploadError
+                ? error.message
+                : "字体上传失败，请换一个字体文件再试试");
+        }
+    }
+
+    /**
      * 识别模式下的「点一下打码」不是按下就执行，而是挂一个 180ms 的延时：
      * 期间只要出现第二根手指、或手指标明显移动，就立刻取消 —— 保证双指缩放永远优先。
      */
@@ -6239,6 +6787,87 @@ export class AnnotEditor {
         const object = this.getObject(this.selectedId);
         if (object?.type === "spotlight") {
             (object.geometry as SpotlightGeometry).shape = shape;
+            object.meta.updatedAt = Date.now();
+            this.commit();
+        }
+        this.render();
+    }
+
+    /** 序号样式：实心圆 / 空心圆 / 定位气泡 / 纯数字 */
+    private setNumberBubble(bubble: NumberBubble): void {
+        this.current.numberBubble = bubble;
+        saveCurrentStyle(this.current);
+        const object = this.getObject(this.selectedId);
+        if (object?.type === "number") {
+            const n = object.geometry as NumberGeometry;
+            const prev = normalizeNumberBubble(n.bubble);
+            const wasPointer = prev === "pointer";
+            n.bubble = bubble;
+            if (bubble === "pointer" && !wasPointer) {
+                // 位置：尖头一律以对象自己的圆心为基准现算，center 一个像素都不动，
+                // 切过去圆心还在用户当初画的地方
+                n.tip = defaultPointerTip(n);
+                n.leader = false;
+                // 填充色只认「定位气泡自己的设置」：实心圆 / 纯数字的底色本来就是主色，
+                // 那不算填充，带过来会让圆内和描边糊成一块红。之前写成主色是错的，
+                // 这里顺手把旧数据里被写成主色的填充色清掉，重新切一次就恢复默认白底。
+                if ((prev === "solid" || prev === "plain") && object.style.fillColor === object.style.color) {
+                    object.style.fillColor = undefined;
+                }
+                object.style.fillOpacity = 1;
+            } else if (bubble !== "pointer" && wasPointer) {
+                // 切回圆形系列：尖头数据不再适用，清掉才能显示干净的一个圆
+                n.tip = null;
+                // 填充色原样保留（空心圆默认也是白底），不拿主色去顶替
+                if (bubble === "hollow") object.style.fillOpacity = 1;
+            }
+            object.meta.updatedAt = Date.now();
+            this.commit();
+        }
+        this.render();
+    }
+
+    /** 定位气泡的「圆头」：尖头折角与引线端帽是圆润还是尖锐 */
+    private setNumberRound(on: boolean): void {
+        this.current.numberRound = on;
+        saveCurrentStyle(this.current);
+        const object = this.getObject(this.selectedId);
+        if (object?.type === "number") {
+            object.style.bubbleRound = on;
+            object.meta.updatedAt = Date.now();
+            this.commit();
+        }
+        this.render();
+    }
+
+    /** 定位气泡的三种颜色：填充 / 边框 / 文字 */
+    private applyNumberColor(prop: "fillColor" | "color" | "numberTextColor", hex: string, commit: boolean): void {
+        if (prop === "color") this.current.color = hex;
+        else if (prop === "fillColor") this.current.fillColor = hex;
+        const object = this.getObject(this.selectedId);
+        if (object?.type === "number") {
+            if (prop === "color") {
+                object.style.color = hex;
+            } else if (prop === "fillColor") {
+                object.style.fillColor = hex;
+                if (!object.style.fillOpacity) object.style.fillOpacity = 1;
+            } else {
+                object.style.numberTextColor = hex;
+            }
+            object.meta.updatedAt = Date.now();
+            if (commit) this.commit();
+        }
+        saveCurrentStyle(this.current);
+        this.render();
+    }
+
+    /** 定位气泡是否画细引线 */
+    private setNumberLeader(on: boolean): void {
+        this.current.numberLeader = on;
+        saveCurrentStyle(this.current);
+        const object = this.getObject(this.selectedId);
+        if (object?.type === "number") {
+            (object.geometry as NumberGeometry).leader = on;
             object.meta.updatedAt = Date.now();
             this.commit();
         }
@@ -6337,6 +6966,9 @@ export class AnnotEditor {
             this.current.spotlightOpacity = ratio;
             const badge = this.root?.querySelector<HTMLElement>('[data-role="ctx-spotlightOpacity"]');
             if (badge) badge.textContent = `${Math.round(ratio * 100)}%`;
+            // 手机端上栏的读数（同一套 data-ctx，读数另挂一份）
+            const mobileBadge = this.root?.querySelector<HTMLElement>('[data-role="m-spotlightOpacity"]');
+            if (mobileBadge) mobileBadge.textContent = `${Math.round(ratio * 100)}%`;
             const spot = this.getObject(this.selectedId);
             if (spot?.type === "spotlight") {
                 spot.style.spotlightOpacity = ratio;
@@ -7125,7 +7757,13 @@ export class AnnotEditor {
         if (!layer || !image) throw new Error("编辑器还没准备好，无法保存图片");
 
         // 1) 所见即所得的成品位图
-        const png = await exportFlatPng(image, layer, this.scene.canvas);
+        //    用到上传字体时要把字体数据带进这次导出，否则独立 SVG 里没有该字体、字形会回退
+        const usedFonts = [...new Set(this.scene.objects
+            .filter((object) => object.type === "text")
+            .map((object) => object.style.fontFamily)
+            .filter((family): family is string => Boolean(family)))];
+        const fontCss = await buildFontFaceCss(usedFonts);
+        const png = await exportFlatPng(image, layer, this.scene.canvas, fontCss);
         // 2) 工程数据：完整原始底图 + 矢量标注 + 画布 / 裁剪窗口
         const scene: AnnotScene = {
             ...this.scene,

@@ -16,14 +16,15 @@ import {
 import {arrowShape, arrowTipMiterInset, arrowShaftPath} from "./arrowGeometry";
 import {formatNumber, numberTextScale} from "./numberFormat";
 import {normalizeNumberTip, type NumberTipKey} from "./numberTip";
-import {pickBadgeTextColor, withAlpha} from "./color";
+import {pickBadgeTextColor, readableInk, withAlpha} from "./color";
+import {fontStackOf} from "./fonts";
 import {charWidthRatio, measureText, textBlockSize, TEXT_LINE_HEIGHT} from "./textLayout";
 import {normalizeArrowStyle} from "./arrowStyles";
 import {rectCornerRadius} from "./cornerRadius";
-import type {CurrentStyle} from "./presets";
+import {normalizeNumberBubble, type CurrentStyle} from "./presets";
 import {
     TYPE_LABELS,
-    type AnnotObject, type AnnotType, type ArrowGeometry, type ArrowStyleKey, type EllipseGeometry,
+    type AnnotStyle, type AnnotObject, type AnnotType, type ArrowGeometry, type ArrowStyleKey, type EllipseGeometry,
     type Geometry, type HighlightGeometry, type LineGeometry, type MosaicGeometry,
     type MagnifierGeometry, type NumberGeometry, type Point, type RectGeometry,
     type SpotlightGeometry, type TextGeometry,
@@ -345,17 +346,26 @@ function numberLeader(
     arrowStyle: ArrowStyleKey,
     color: string,
     lineWidth: number,
+    /** 起点从圆心往外让出的距离：实心圆由圆盖住，空心圆 / 纯数字要让到圆外 */
+    inset = 0,
 ): SVGElement[] {
     if (!n.tip) return [];
     const linecap = rounded ? "round" : "butt";
     const linejoin = rounded ? "round" : "miter";
+    // 起点沿引线方向外移，空心圆不会有一条线横穿内部
+    const gap = Math.hypot(n.tip.x - n.center.x, n.tip.y - n.center.y) || 1;
+    const start = {
+        x: n.center.x + (n.tip.x - n.center.x) / gap * inset,
+        y: n.center.y + (n.tip.y - n.center.y) / gap * inset,
+    };
+    const lead: ArrowGeometry = {
+        start,
+        end: {x: n.tip.x, y: n.tip.y},
+        control: n.control ? {x: n.control.x, y: n.control.y} : null,
+    };
     const out: SVGElement[] = [];
     if (tipStyle === "arrow") {
-        const geometry: ArrowGeometry = {
-            start: {x: n.center.x, y: n.center.y},
-            end: {x: n.tip.x, y: n.tip.y},
-            control: n.control ? {x: n.control.x, y: n.control.y} : null,
-        };
+        const geometry: ArrowGeometry = {...lead};
         // 用序号自己选的样式（单头 / 双头 / 线条等），与箭头工具同一套几何
         const shape = arrowShape(geometry, arrowStyle, lineWidth);
         if (shape.shaft) {
@@ -376,7 +386,7 @@ function numberLeader(
         return out;
     }
     out.push(svgEl("path", {
-        d: arrowShaftPath(geometryOf(n)), fill: "none", stroke: color, "stroke-width": lineWidth,
+        d: arrowShaftPath(lead), fill: "none", stroke: color, "stroke-width": lineWidth,
         "stroke-linecap": linecap, "stroke-linejoin": linejoin,
         "pointer-events": "none", class: "annot-shape",
     }));
@@ -395,13 +405,72 @@ function numberLeader(
     return out;
 }
 
-/** 只取主干用的几何（圆点 / 方点共用） */
-function geometryOf(n: NumberGeometry): ArrowGeometry {
-    return {
-        start: {x: n.center.x, y: n.center.y},
-        end: {x: n.tip!.x, y: n.tip!.y},
-        control: n.control ? {x: n.control.x, y: n.control.y} : null,
-    };
+/**
+ * 定位气泡：一个整体的「水滴 / 图钉」形路径。
+ *
+ * 尖头不是贴在圆旁边，而是从圆心外一点向圆引两条**切线**：
+ * 切点由 d 与 R 决定（θ = acos(R/d)），路径 = 大弧（绕背面）+ 切线到尖端 + 闭合。
+ * 这样尖头两边与圆自然相切，描边也是一整条，不会在接缝处断掉。
+ *
+ * 尖头长度：没有引线时跟着拖动距离走；有引线时封顶在 1.9R，多出来的部分交给细引线。
+ */
+function pointerBubble(n: NumberGeometry, style: AnnotStyle, color: string, lineWidth: number): SVGElement[] {
+    const target = n.tip;
+    const radius = n.radius;
+    if (!target) return [];
+    const dx = target.x - n.center.x;
+    const dy = target.y - n.center.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.5) return [];
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const headMax = radius * 1.9;
+    // 无引线：尖头直接指到落点；有引线：尖头封顶，剩余距离画引线
+    const d = Math.max(radius * 1.04, n.leader ? Math.min(dist, headMax) : dist);
+    const apex = {x: n.center.x + ux * d, y: n.center.y + uy * d};
+    // 从尖端向圆引切线：切点与圆心连线的夹角
+    const theta = Math.acos(Math.min(1, radius / d));
+    const phi = Math.atan2(uy, ux);
+    const t1 = {x: n.center.x + radius * Math.cos(phi + theta), y: n.center.y + radius * Math.sin(phi + theta)};
+    const t2 = {x: n.center.x + radius * Math.cos(phi - theta), y: n.center.y + radius * Math.sin(phi - theta)};
+    const out: SVGElement[] = [];
+    // 圆头开关：开＝圆端帽 / 圆折角，关＝平口与尖角
+    const round = style.bubbleRound !== false;
+    if (n.leader && dist > d + 2) {
+        out.push(svgEl("line", {
+            x1: apex.x, y1: apex.y, x2: target.x, y2: target.y,
+            stroke: color, "stroke-width": Math.max(1.4, lineWidth * 0.6),
+            "stroke-linecap": round ? "round" : "butt", "pointer-events": "none", class: "annot-shape",
+        }));
+    }
+    // 画布上的尖头：一个三角，两个底角落在切点上，根部由后画的圆盖住。
+    // 露在外面的只剩「从圆边平滑长出去」的那一段，圆保持完整、描边不断开。
+    // 注意：工具栏的小图标是另一套独立绘制（editor/numberIcon.ts），改图标不要动这里。
+    out.push(svgEl("path", {
+        d: `M${t1.x} ${t1.y}L${apex.x} ${apex.y}L${t2.x} ${t2.y}Z`,
+        // 尖头的颜色＝圆的描边色，两者是同一种颜色，交叠处不会出现深浅接缝
+        fill: color,
+        stroke: color,
+        "stroke-width": lineWidth,
+        "stroke-linejoin": round ? "round" : "miter",
+        "stroke-linecap": round ? "round" : "butt",
+        "pointer-events": "none",
+        class: "annot-head",
+    }));
+    return out;
+}
+
+/**
+ * 定位气泡的默认尖头：朝右下 45°，长度 1.5 倍半径。
+ *
+ * 只在「从其它样式切换过来」或读到缺数据的老场景时用来补全：
+ * 圆形对象本来只有圆心和半径，没有尖头数据，直接按定位气泡渲染会算出 NaN。
+ */
+export function defaultPointerTip(n: NumberGeometry): Point {
+    const center = n.center ?? {x: 0, y: 0};
+    const radius = Number.isFinite(n.radius) && n.radius > 0 ? n.radius : 12;
+    const len = radius * 1.5 * Math.SQRT1_2;
+    return {x: center.x + len, y: center.y + len};
 }
 
 /** 把一个标注对象渲染成 SVG 组：命中层与可见层分开 */
@@ -516,7 +585,7 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
             const block = textBlockSize(t.text, t.fontSize, t.width ?? Infinity);
             const textAttrs: Record<string, string | number> = {
                 x: t.x, y: t.y + t.fontSize, fill: color,
-                "font-size": t.fontSize, "font-family": "var(--b3-font-family, sans-serif)",
+                "font-size": t.fontSize, "font-family": fontStackOf(object.style.fontFamily),
                 "font-weight": "600", "pointer-events": "none", class: "annot-shape",
             };
             if (strokeEnabled && strokeWidth > 0) {
@@ -546,21 +615,65 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
         case "number": {
             const n = object.geometry as NumberGeometry;
             group.append(hitRect(bounds, zoom));
-            visuals.push(...numberLeader(
-                n, normalizeNumberTip(object.style.numberTip), object.style.arrowRounded !== false,
-                normalizeArrowStyle(object.style.numberArrowStyle), color, lineWidth));
-            visuals.push(svgEl("circle", {
-                cx: n.center.x, cy: n.center.y, r: n.radius,
-                fill: color, "pointer-events": "none",
-            }));
+            // 四种外观：实心圆 / 空心圆 / 定位气泡 / 纯数字（不画外框）
+            const bubble = normalizeNumberBubble(n.bubble);
+            // 尖头数据缺失或坐标坏掉时按「没有尖头」处理，绝不拿 NaN 去算路径
+            const tipOk = !!n.tip && Number.isFinite(n.tip.x) && Number.isFinite(n.tip.y);
+            const isPointer = bubble === "pointer" && tipOk;
+            const hollow = bubble === "hollow";
+            const isPlain = bubble === "plain";
+            // 文字颜色按样式各自决定：只有实心圆需要「自动反差色」，
+            // 其余三种一律用主色。各分支自己算，互不影响。
+            let ink = color;
+            if (isPointer) {
+                // 先尖头（下层），再完整圆（上层盖住尖头根部），交叠处完美融合
+                visuals.push(...pointerBubble(n, object.style, color, lineWidth));
+                visuals.push(svgEl("circle", {
+                    cx: n.center.x, cy: n.center.y, r: n.radius,
+                    fill: object.style.fillColor ?? "#FFFFFF",
+                    "fill-opacity": object.style.fillOpacity === undefined ? 1 : object.style.fillOpacity,
+                    stroke: color, "stroke-width": lineWidth,
+                    "pointer-events": "none", class: "annot-shape",
+                }));
+                ink = readableInk(color, object.style.fillColor ?? "#FFFFFF");
+            } else {
+                // 实心圆 / 空心圆 / 纯数字都支持引线：起点让出圆边，线不会横穿内部
+                const leaderInset = hollow ? n.radius : (isPlain ? n.radius * 0.8 : 0);
+                visuals.push(...numberLeader(
+                    n, normalizeNumberTip(object.style.numberTip), object.style.arrowRounded !== false,
+                    normalizeArrowStyle(object.style.numberArrowStyle), color, lineWidth, leaderInset));
+                if (hollow) {
+                    // 空心圆：描边 + 实色填充（默认白，颜色只由取色器决定，没有透明档）
+                    visuals.push(svgEl("circle", {
+                        cx: n.center.x, cy: n.center.y, r: n.radius,
+                        fill: object.style.fillColor ?? "#FFFFFF",
+                        "fill-opacity": 1,
+                        stroke: color, "stroke-width": lineWidth,
+                        "pointer-events": "none", class: "annot-shape",
+                    }));
+                    ink = readableInk(color, object.style.fillColor ?? "#FFFFFF");
+                } else if (!isPlain) {
+                    // 实心圆：整颗填满主色，所以文字必须取反差色 —— 反色逻辑只在这里
+                    visuals.push(svgEl("circle", {
+                        cx: n.center.x, cy: n.center.y, r: n.radius,
+                        fill: color, "pointer-events": "none",
+                    }));
+                    ink = pickBadgeTextColor(color);
+                } else {
+                    // 纯数字：没有底色，直接跟主色
+                    ink = color;
+                }
+            }
             // 编号按格式翻译（1 / I / a / A / 一）；多字符时把字号收一点，别撑出圆点
+            // 手动指定过文字色（定位气泡的三色取色器）就以它为准，其余走上面按样式算出来的 ink
+            if (object.style.numberTextColor) ink = object.style.numberTextColor;
             const badgeText = formatNumber(n.number, n.format ?? "arabic");
             const label = svgEl("text", {
                 x: n.center.x, y: n.center.y + n.radius * 0.36,
-                fill: pickBadgeTextColor(color),
+                fill: ink,
                 "font-size": n.radius * 1.05 * numberTextScale(badgeText),
                 "font-weight": "700", "text-anchor": "middle",
-                "font-family": "var(--b3-font-family, sans-serif)",
+                "font-family": fontStackOf(undefined),
                 "pointer-events": "none", class: "annot-shape",
             });
             label.textContent = badgeText;
@@ -1002,16 +1115,23 @@ export function defaultStyle(type: AnnotType, current: CurrentStyle) {
     const shape = type === "rect" || type === "ellipse" || highlightRect;
     // 矩形高亮的「浓度」直接复用填充不透明度；当前填充是 0% 时兜底 50%，
     // 否则刚画出来会是一块全透明，看着像「什么都没发生」
+    // 定位气泡走「白底 + 彩边」，所以它的填充默认是实心白，不带描边预设里的浓度
+    const bubble = type === "number" ? normalizeNumberBubble(current.numberBubble) : "solid";
+    const pointerNumber = bubble === "pointer";
+    const hollowNumber = bubble === "hollow";
     const fill = highlightRect
         ? (current.fillOpacity > 0 ? current.fillOpacity : 0.5)
-        : (shape ? current.fillOpacity : 0);
+        : (shape ? current.fillOpacity : ((pointerNumber || hollowNumber) ? 1 : 0));
     const style = {
         color: current.color,
         lineWidth: current.lineWidth,
         opacity: type === "highlight" ? 0.35 : 1,
         fontSize: current.fontSize,
+        // 只有文字用得上；存的是档位键，渲染时才翻译成字体栈
+        fontFamily: type === "text" ? current.fontFamily : undefined,
         fillOpacity: fill,
-        fillColor: shape ? current.fillColor : undefined,
+        // 定位气泡与空心圆都给一个可填的底色：定位默认白，空心默认全透明
+        fillColor: (pointerNumber || hollowNumber) ? "#FFFFFF" : (shape ? current.fillColor : undefined),
         fillMode: (shape && fill > 0 ? "translucent" : "none") as "none" | "solid" | "translucent",
         lineDash: current.lineDash,
         lineDashGap: current.lineDashGap,

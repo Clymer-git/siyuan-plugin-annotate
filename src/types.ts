@@ -85,6 +85,9 @@ export interface TextGeometry {
     rotation?: number;
 }
 
+/** 序号的四种外观：实心圆（默认）/ 空心圆 / 定位气泡 / 纯数字 */
+export type NumberBubble = "solid" | "hollow" | "pointer" | "plain";
+
 /** 序号：tip 为 null 表示只有圆点，否则为引线端点 */
 export interface NumberGeometry {
     center: Point;
@@ -95,6 +98,10 @@ export interface NumberGeometry {
     radius: number;
     /** 编号显示格式：1 / I / a / A / 一；缺省按阿拉伯数字 */
     format?: "arabic" | "roman" | "alphaLower" | "alphaUpper" | "chinese";
+    /** 气泡样式：solid 实心圆 / hollow 空心圆 / pointer 定位气泡 / plain 纯数字；缺省按实心圆 */
+    bubble?: NumberBubble;
+    /** 定位气泡：是否画细引线；拖动距离不足尖头长度时自动不画 */
+    leader?: boolean;
     rotation?: number;
 }
 
@@ -172,6 +179,12 @@ export interface AnnotStyle {
     opacity: number;
     /** 文字/序号的字号 */
     fontSize?: number;
+    /**
+     * 文字字体档位："" / 缺省＝跟随思源正文，"code"＝跟随思源等宽，
+     * 其它值为固定档位键（sans / serif / kai / round，见 editor/fonts.ts）。
+     * 存键不存字体栈，思源换了字体旧文字也跟着走，同时避免硬编码商业字体。
+     */
+    fontFamily?: string;
     /** 形状内部填充不透明度 0~1；0 表示不填充 */
     fillOpacity?: number;
     /** 填充色；缺省跟描边色一致（老图保持原样） */
@@ -196,6 +209,10 @@ export interface AnnotStyle {
     numberTip?: "arrow" | "dot" | "square";
     /** 序号引线末端为箭头时用哪种箭头样式（与箭头工具同一套七种）；缺省经典 */
     numberArrowStyle?: ArrowStyleKey;
+    /** 定位气泡里的文字颜色；缺省跟随边框色（style.color） */
+    numberTextColor?: string;
+    /** 定位气泡的尖头与引线末端是否圆头；缺省为圆头 */
+    bubbleRound?: boolean;
     /**
      * 矩形的圆角半径，画布像素单位；缺省 0 表示直角。
      * 与 ShareX 的 CornerRadius 同义：四个角用同一个半径，缩放矩形时半径不跟着变，

@@ -11,10 +11,13 @@
 
 import {getFileBlob, uploadAsset} from "../platform";
 import {createCanvas} from "./canvas";
+import {inlineFontVars} from "./fonts";
 import {
     SCENE_VERSION,
-    type AnnotScene, type AnnotObject, type CanvasState,
+    type AnnotScene, type AnnotObject, type CanvasState, type NumberGeometry,
 } from "../types";
+import {normalizeNumberBubble} from "./presets";
+import {defaultPointerTip} from "./shapes";
 
 const INDEX_PATH = "data/storage/petal/siyuan-plugin-annotate/index.json";
 const FALLBACK_DIR = "data/storage/petal/siyuan-plugin-annotate";
@@ -64,6 +67,18 @@ export function normalizeScene(raw: AnnotScene | null): AnnotScene | null {
     }
     if (scene.canvas.background === undefined) scene.canvas.background = null;
     for (const object of scene.objects as AnnotObject[]) {
+        // 老场景里可能存着「定位气泡但没尖头」的序号（早期切样式不补数据），
+        // 打开时补一个默认尖头，否则渲染只能画成一个圆
+        if (object.type === "number" && normalizeNumberBubble((object.geometry as NumberGeometry).bubble) === "pointer") {
+            const n = object.geometry as NumberGeometry;
+            if (!n.tip || !Number.isFinite(n.tip.x) || !Number.isFinite(n.tip.y)) {
+                n.tip = defaultPointerTip(n);
+                n.leader = false;
+            }
+            // 填充色 == 描边色 是「实心圆切过来时把主色写进填充」留下的脏数据，
+            // 那样圆内和尖头糊成一块、看不出是个气泡，这里统一清回默认白底
+            if (object.style.fillColor === object.style.color) object.style.fillColor = undefined;
+        }
         if (object.type !== "text") continue;
         if (object.style.textStrokeEnabled === undefined) {
             object.style.textStrokeEnabled = true;
@@ -102,6 +117,8 @@ export async function exportFlatPng(
     baseImage: HTMLImageElement,
     objectLayer: SVGGElement,
     canvas: CanvasState,
+    /** 用户上传字体的 @font-face 规则；空串表示这次没有要用内嵌字体的文字 */
+    fontCss = "",
 ): Promise<Blob> {
     const width = Math.max(1, Math.round(canvas.width));
     const height = Math.max(1, Math.round(canvas.height));
@@ -125,11 +142,17 @@ export async function exportFlatPng(
     if (typeof ctx.setTransform === "function") ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     // 2) 对象层：单独栅格化成透明 SVG 再叠上去
-    const objectsMarkup = new XMLSerializer().serializeToString(objectLayer)
-        // 独立 SVG 里没有思源的 CSS 变量，统一换成系统字体
-        .replace(/font-family="[^"]*"/g, 'font-family="sans-serif"');
+    // 独立 SVG 里读不到思源的 CSS 变量，只把字体变量解析成真实字体栈；
+    // 用户选的固定字体（楷体 / 等宽 / 衬线）原样保留，否则一保存字体就会被冲掉
+    const objectsMarkup = inlineFontVars(new XMLSerializer().serializeToString(objectLayer));
+    // 上传的字体不在系统里，独立 SVG 读不到页面注册的字体，
+    // 必须把字体数据以 @font-face 内嵌进这张临时 SVG，导出才会用对字形
+    const fontBlock = fontCss
+        ? `<defs><style type="text/css"><![CDATA[${fontCss}]]></style></defs>`
+        : "";
     const svgMarkup =
         `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+        fontBlock +
         objectsMarkup +
         `</svg>`;
     const svgUrl = URL.createObjectURL(new Blob([svgMarkup], {type: "image/svg+xml;charset=utf-8"}));

@@ -410,6 +410,177 @@ if (process.argv[3] === "--m3") {
     draw("number", {x: 80, y: 250}, {x: 80, y: 250});
     check("M3 序号可绘制且显示 1",
         count() === 4 && layer()?.querySelector('text[text-anchor="middle"]')?.textContent === "1");
+    {
+        // 序号四样式：实心圆 → 空心圆 → 定位气泡 → 纯数字，参数随样式切换
+        const bar = () => q('[data-role="context-bar"]');
+        const bubbleBtn = (val) => bar()?.querySelector(`button[data-action="number-bubble"][data-value="${val}"]`);
+        const bubbleOrder = () => Array.from(
+            bar()?.querySelectorAll('button[data-action="number-bubble"]') ?? [])
+            .map((el) => el.getAttribute("data-value")).join(",");
+        check("M3 四枚样式按钮按「实心 / 空心 / 定位 / 数字」排列",
+            bubbleOrder() === "solid,hollow,pointer,plain", bubbleOrder());
+        {
+            // 图标就是「真的画了一遍序号」：每种样式里都有数字 1
+            const iconOf = (val) => bubbleBtn(val)?.querySelector("svg");
+            const digitOf = (val) => iconOf(val)?.querySelector("text")?.textContent ?? "";
+            check("M3 四枚样式图标的圆里都有数字 1",
+                digitOf("solid") === "1" && digitOf("hollow") === "1" &&
+                digitOf("pointer") === "1" && digitOf("plain") === "1",
+                ["solid", "hollow", "pointer", "plain"].map(digitOf).join("/"));
+            check("M3 定位气泡图标带尖头路径，其余没有",
+                !!iconOf("pointer")?.querySelector("path") &&
+                !iconOf("solid")?.querySelector("path") &&
+                !iconOf("hollow")?.querySelector("path"),
+                iconOf("pointer")?.querySelector("path")?.getAttribute("d")?.slice(0, 30) ?? "没有路径");
+            check("M3 图标是单色（currentColor），不跟当前标注色走",
+                (iconOf("solid")?.querySelector("circle")?.getAttribute("style") ?? "")
+                    .includes("var(--annot-badge-disc, currentColor)"),
+                iconOf("solid")?.querySelector("circle")?.getAttribute("style") ?? "");
+            check("M3 PC 端样式按钮只放图标、没有文字",
+                !bubbleBtn("solid")?.querySelector("span") &&
+                !!bubbleBtn("solid")?.getAttribute("title"),
+                `span=${!!bubbleBtn("solid")?.querySelector("span")} / ${bubbleBtn("solid")?.getAttribute("title")}`);
+        }
+        check("M3 实心圆显示端点、不显示引线 / 圆头 / 填充",
+            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+            !bar()?.querySelector('button[data-action="number-leader"]') &&
+            !bar()?.querySelector('button[data-action="number-round"]') &&
+            !bar()?.querySelector('[data-action="number-color"]'));
+        bubbleBtn("hollow")?.click();
+        {
+            const g = Array.from(layer()?.querySelectorAll("g.annot-object") ?? []).pop();
+            const ink = g?.querySelector("text.annot-shape")?.getAttribute("fill") ?? "";
+            const stroke = g?.querySelector("circle.annot-shape")?.getAttribute("stroke") ?? "";
+            check("M3 白底空心圆的文字就是主色（和边框同色）",
+                ink !== "" && ink === stroke, `${ink} / ${stroke}`);
+        }
+        check("M3 空心圆：有填充取色与端点，没有透明档 / 引线开关",
+            !!bar()?.querySelector('[data-action="number-color"][data-value="fillColor"]') &&
+            !bar()?.querySelector('[data-action="number-fill-none"]') &&
+            !/透明/.test(bar()?.textContent ?? "") &&
+            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+            !bar()?.querySelector('button[data-action="number-leader"]'),
+            bar()?.textContent?.slice(0, 40) ?? "");
+        bubbleBtn("plain")?.click();
+        check("M3 纯数字：没有外框参数，但保留编号与端点",
+            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+            !bar()?.querySelector('button[data-action="number-leader"]') &&
+            !bar()?.querySelector('[data-action="number-color"]') &&
+            !!bar()?.querySelector('[data-action="number-format-toggle"]'),
+            bar()?.textContent?.slice(0, 40) ?? "");
+        bubbleBtn("pointer")?.click();
+        check("M3 定位气泡：隐藏端点，给出引线 / 圆头 / 填充",
+            !bar()?.querySelector('button[data-action="number-tip"]') &&
+            !!bar()?.querySelector('button[data-action="number-leader"]') &&
+            !!bar()?.querySelector('button[data-action="number-round"]') &&
+            !!bar()?.querySelector('[data-action="number-color"]'),
+            bar()?.textContent?.slice(0, 40) ?? "");
+        bubbleBtn("solid")?.click();
+    }
+    {
+        // 拖动预览：还没松手就该是带尖头的气泡，不能先画个光秃秃的圆
+        click('button[data-tool="number"]');
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="pointer"]')?.click();
+        const before = layer()?.querySelectorAll("g.annot-object").length ?? 0;
+        ptr("pointerdown", {x: 300, y: 420});
+        ptr("pointermove", {x: 390, y: 420});
+        check("M3 拖动预览就显示带尖头的气泡",
+            !!layer()?.querySelector("path.annot-head"),
+            layer()?.querySelector("path.annot-head") ? "有尖头" : "没有");
+        ptr("pointerup", {x: 390, y: 420});
+        check("M3 松手后定位气泡成为正式对象",
+            (layer()?.querySelectorAll("g.annot-object").length ?? 0) === before + 1,
+            `${before} -> ${layer()?.querySelectorAll("g.annot-object").length ?? 0}`);
+        // 撤掉这个测试对象，别影响后面按数量断言的用例
+        q('[data-action="undo"]')?.click();
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="solid"]')?.click();
+    }
+    {
+        // 空心圆 / 纯数字也要能拉出引线（曾经只有实心圆能拉）
+        // 注意：两个样式要画在不同位置，同一处按下会被「同类防重叠」拦成选中
+        for (const [index, kind] of ["hollow", "plain"].entries()) {
+            click('button[data-tool="number"]');
+            q(`[data-role="context-bar"] button[data-action="number-bubble"][data-value="${kind}"]`)?.click();
+            const before = layer()?.querySelectorAll("g.annot-object").length ?? 0;
+            draw("number", {x: 120 + index * 140, y: 560}, {x: 220 + index * 140, y: 560});
+            const groups = Array.from(layer()?.querySelectorAll("g.annot-object") ?? []);
+            const last = groups[groups.length - 1];
+            check(`M3 ${kind} 样式拖一下能拉出引线`,
+                groups.length === before + 1 &&
+                !!last?.querySelector("path.annot-shape") &&
+                !!last?.querySelector("path.annot-head"),
+                `${before} -> ${groups.length}`);
+        }
+        q('[data-action="undo"]')?.click();
+        q('[data-action="undo"]')?.click();
+        click('button[data-tool="number"]');
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="solid"]')?.click();
+    }
+    {
+        // 画一个拖出长尖的实心圆，再切成定位气泡：必须补上默认尖头，不能变成长刺或消失
+        click('button[data-tool="number"]');
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="solid"]')?.click();
+        draw("number", {x: 140, y: 640}, {x: 280, y: 640});
+        const center = {x: 140, y: 640};
+        const lastGroup = () => {
+            const groups = Array.from(layer()?.querySelectorAll("g.annot-object") ?? []);
+            return groups[groups.length - 1];
+        };
+        const apexDist = () => {
+            const d = lastGroup()?.querySelector("path.annot-head")?.getAttribute("d") ?? "";
+            const pts = [...d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)]
+                .map((m) => ({x: Number(m[1]), y: Number(m[2])}));
+            return pts.length ? Math.max(...pts.map((p) => Math.hypot(p.x - center.x, p.y - center.y))) : NaN;
+        };
+        const solidCircle = () => lastGroup()?.querySelector("circle");
+        const centerOf = (el) => ({
+            x: Number(el?.getAttribute("cx") ?? NaN),
+            y: Number(el?.getAttribute("cy") ?? NaN),
+        });
+        const solidFill = solidCircle()?.getAttribute("fill") ?? "";
+        const solidInk = lastGroup()?.querySelector("text.annot-shape")?.getAttribute("fill") ?? "";
+        check("M3 实心圆的文字用反差色（和圆底不同）",
+            solidInk !== "" && solidInk !== solidFill, `${solidInk} vs ${solidFill}`);
+
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="pointer"]')?.click();
+        check("M3 实心圆切成定位气泡：自动补出默认尖头（约 1.5 倍半径）",
+            apexDist() > 20 && apexDist() < 40,
+            `尖头距圆心 ${Number.isNaN(apexDist()) ? "NaN" : apexDist().toFixed(1)}`);
+        check("M3 切过来默认不带细引线",
+            (lastGroup()?.querySelectorAll("line.annot-shape").length ?? -1) === 0);
+        {
+            const c = centerOf(lastGroup()?.querySelector("circle.annot-shape"));
+            check("M3 切过来圆心没跑（仍在原来画的位置）",
+                Math.abs(c.x - center.x) < 0.5 && Math.abs(c.y - center.y) < 0.5,
+                `圆心 ${c.x},${c.y} / 原 ${center.x},${center.y}`);
+            check("M3 切换后内部回到默认白底（实心圆的底色不当填充带过来）",
+                (lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill") ?? "") === "#FFFFFF",
+                String(lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill")));
+            const ink = lastGroup()?.querySelector("text.annot-shape")?.getAttribute("fill") ?? "";
+            const fillNow = lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill") ?? "";
+            check("M3 定位气泡的文字不会和底色撞在一起（红底上不会是红字）",
+                ink !== "" && ink !== fillNow, `${ink} / 底 ${fillNow}`);
+        }
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="hollow"]')?.click();
+        {
+            const c = centerOf(lastGroup()?.querySelector("circle.annot-shape"));
+            check("M3 再切到空心圆：圆心没动，内部仍是白底",
+                Math.abs(c.x - center.x) < 0.5 && Math.abs(c.y - center.y) < 0.5 &&
+                (lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill") ?? "") === "#FFFFFF",
+                `圆心 ${c.x},${c.y} / 填充 ${lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill")}`);
+            const hollowInk = lastGroup()?.querySelector("text.annot-shape")?.getAttribute("fill") ?? "";
+            const hollowFill = lastGroup()?.querySelector("circle.annot-shape")?.getAttribute("fill") ?? "";
+            check("M3 空心圆的文字同样不会和内部填充撞色",
+                hollowInk !== "" && hollowInk !== hollowFill, `${hollowInk} / 底 ${hollowFill}`);
+        }
+        q('[data-role="context-bar"] button[data-action="number-bubble"][data-value="solid"]')?.click();
+        check("M3 再切回实心圆：尖头与引线全部消失，只剩完整的圆",
+            !lastGroup()?.querySelector("path.annot-head") &&
+            (lastGroup()?.querySelectorAll("line.annot-shape").length ?? -1) === 0 &&
+            !!lastGroup()?.querySelector("circle"));
+        // 清理：撤回这把测试对象，别影响后面按数量断言的用例
+        for (let i = 0; i < 10 && count() !== 4; i++) q('[data-action="undo"]')?.click();
+    }
     draw("mosaic", {x: 180, y: 230}, {x: 330, y: 330});
     check("M3 马赛克可绘制", count() === 5);
     {
@@ -460,6 +631,34 @@ if (process.argv[3] === "--m3") {
         Array.from(layer()?.querySelectorAll("g.annot-object") ?? []).every((g) => g.hasAttribute("opacity")));
 
     click('button[data-tool="text"]');
+    {
+        // 字体面板：点按钮展开；顶部是上传按钮，下面按「自定义 → 系统字体」分区
+        const trigger = () => q('[data-role="context-bar"] button[data-action="font-pop"]');
+        check("M3 文字工具悬浮栏有字体按钮", !!trigger(),
+            trigger() ? trigger().textContent.trim() : "无");
+        trigger()?.click();
+        const pop = () => q('[data-role="font-pop"]');
+        check("M3 字体面板顶部就是上传按钮",
+            !!pop() && pop().firstElementChild?.getAttribute("data-action") === "font-upload");
+        check("M3 字体面板没有「自定义字体」这类冗余文字",
+            !/自定义字体/.test(pop()?.textContent ?? ""),
+            (pop()?.textContent ?? "").slice(0, 30));
+        check("M3 字体面板保留「系统字体」标题分组",
+            (pop()?.querySelector(".annot-font-sep")?.textContent ?? "").includes("系统字体"));
+        check("M3 字体面板有默认项（跟随思源）",
+            Array.from(pop()?.querySelectorAll('[data-action="font-pick"]') ?? [])
+                .some((el) => el.getAttribute("data-value") === ""));
+        // 在面板上滚轮：面板自己滚，画布不缩放（曾经一点滚轮画面就跑）
+        {
+            const overPop = new win.WheelEvent("wheel", {deltaY: -120, bubbles: true, cancelable: true});
+            pop()?.dispatchEvent(overPop);
+            check("M3 字体面板上滚轮不再缩放画布", overPop.defaultPrevented === false);
+            const overStage = new win.WheelEvent("wheel", {deltaY: -120, bubbles: true, cancelable: true});
+            q(".annot-stage")?.dispatchEvent(overStage);
+            check("M3 画布上滚轮仍然缩放", overStage.defaultPrevented === true);
+        }
+        trigger()?.click();
+    }
     ptr("pointerdown", {x: 80, y: 420});
     let textArea = q(".annot-text-editor");
     check("M3 文字工具点一下即进入编辑态", !!textArea);
@@ -1047,6 +1246,45 @@ if (process.argv[3] === "--m3") {
         !!lastGroup()?.querySelector("path.annot-shape") &&
         !lastGroup()?.querySelector("rect.annot-shape"),
         `${count()} 个对象`);
+
+    // 7) 防重叠：手里拿着某个工具时，按在同类已有对象上就选中它，不再叠一个
+    {
+        const lastOf = () => {
+            const groups = Array.from(layer()?.querySelectorAll("g.annot-object:not(.is-preview)") ?? []);
+            return groups[groups.length - 1];
+        };
+        const rectBefore = count();
+        draw("rect", {x: 400, y: 640}, {x: 560, y: 740});
+        const rectId = lastOf()?.getAttribute("data-object-id");
+        check("v1.2.0-alpha.19 防重叠：先画一个矩形备用",
+            count() === rectBefore + 1 && !!rectId, `${count()} 个`);
+
+        // 工具仍是矩形，在刚才那个矩形内部起手
+        click('button[data-tool="rect"]');
+        ptr("pointerdown", {x: 450, y: 680});
+        ptr("pointermove", {x: 520, y: 720});
+        const previewing = !!layer()?.querySelector(".annot-object.is-preview");
+        ptr("pointerup", {x: 520, y: 720});
+        check("v1.2.0-alpha.19 同类对象内按下不再叠一个新矩形",
+            !previewing && count() === rectBefore + 1, `预览=${previewing} / ${count()} 个`);
+        check("v1.2.0-alpha.19 同类对象内按下改为选中原来那个",
+            !!layer()?.querySelector(`g.annot-object.is-selected[data-object-id="${rectId}"]`),
+            `选中=${layer()?.querySelectorAll("g.annot-object.is-selected").length}`);
+
+        // 不同类型不拦：在同一个矩形上画箭头，照常预览并生成新对象
+        const arrowBefore = count();
+        click('button[data-tool="arrow"]');
+        ptr("pointerdown", {x: 450, y: 680});
+        ptr("pointermove", {x: 520, y: 720});
+        check("v1.2.0-alpha.19 在矩形上画箭头照常进入绘制预览",
+            !!layer()?.querySelector(".annot-object.is-preview"));
+        ptr("pointerup", {x: 520, y: 720});
+        check("v1.2.0-alpha.19 在矩形上画箭头正常生成新对象",
+            count() === arrowBefore + 1, `${arrowBefore} -> ${count()}`);
+        // 清掉这两个测试对象，别影响收尾
+        q('[data-action="undo"]')?.click();
+        q('[data-action="undo"]')?.click();
+    }
 
     click('[data-action="close"]');
     await tick();
@@ -1734,7 +1972,12 @@ if (process.argv[3] === "--m5") {
     check("M5 适应窗口恢复初始缩放", zoomText() === fitZoom, `${zoomText()} vs ${fitZoom}`);
 
     // 5) 连续 10 次撤销 / 重做结果一致
-    for (let i = 0; i < 10; i++) drawRect({x: 40 + i * 12, y: 40 + i * 8}, {x: 130 + i * 12, y: 110 + i * 8});
+    // 排成两行网格：同类对象不许互相压着画（会在起手处被防重叠拦成选中）
+    for (let i = 0; i < 10; i++) {
+        const col = i % 5;
+        const row = Math.floor(i / 5);
+        drawRect({x: 30 + col * 120, y: 30 + row * 120}, {x: 110 + col * 120, y: 100 + row * 120});
+    }
     check("M5 连续画出 10 个标注", count() === 10, `${count()} 个`);
     const idsBefore = objectIds().join(",");
     for (let i = 0; i < 10; i++) key("z", {ctrlKey: true});
@@ -3182,20 +3425,29 @@ if (process.argv[3] === "--ui") {
             return {w: Number(el.getAttribute("width")), h: Number(el.getAttribute("height"))};
         };
 
+        // 重新打开一次编辑器，拿到干净画布：本块用例都从空画布起手。
+        // 「同类防重叠」生效后，起点落在已有同类对象里会被拦成选中，断言就会读到旧对象。
+        click('[data-action="close"]');
+        await settleUI();
+        openUI();
+        await settleUI();
+        svg = win.document.querySelector('[data-role="svg"]');
+        check("UI Shift 约束用例从空画布起手", groups().length === 0, String(groups().length));
+
         // 箭头：自由角度（反证）
         await drawWith("arrow", {x: 200, y: 200}, {x: 400, y: 300}, false);
         const freeArrow = arrowBox();
         check("UI 箭头：不按 Shift 是自由角度（斜线不被吸走）",
             freeArrow.w > 150 && freeArrow.h > 60 && freeArrow.h < 140,
             `w=${freeArrow.w.toFixed(1)} h=${freeArrow.h.toFixed(1)}`);
-        // 箭头 + Shift：水平
-        await drawWith("arrow", {x: 200, y: 200}, {x: 420, y: 232}, true);
+        // 箭头 + Shift：水平（起点要让开上一条箭头，否则会被防重叠拦下）
+        await drawWith("arrow", {x: 200, y: 380}, {x: 420, y: 412}, true);
         const flatArrow = arrowBox();
         check("UI 箭头：按住 Shift 吸附成水平（0°/180°）",
             flatArrow.w > 150 && flatArrow.h < 30,
             `w=${flatArrow.w.toFixed(1)} h=${flatArrow.h.toFixed(1)}`);
         // 箭头 + Shift：45°
-        await drawWith("arrow", {x: 300, y: 400}, {x: 500, y: 560}, true);
+        await drawWith("arrow", {x: 500, y: 300}, {x: 700, y: 460}, true);
         const diagArrow = arrowBox();
         check("UI 箭头：按住 Shift 吸附成 45°（横竖等长）",
             diagArrow.w > 120 && Math.abs(diagArrow.w - diagArrow.h) < 8,
@@ -4326,7 +4578,12 @@ if (process.argv[3] === "--m7") {
     ).size;
     const typeText = (pt, value) => {
         ptr("pointerdown", pt);
-        const area = q(".annot-text-editor");
+        let area = q(".annot-text-editor");
+        if (!area) {
+            // 上一段输入还没收尾：这一下只用来结束它，再点一次才新建
+            ptr("pointerdown", pt);
+            area = q(".annot-text-editor");
+        }
         if (!area) return null;
         area.value = value;
         fire(area, "input");
@@ -4433,6 +4690,27 @@ if (process.argv[3] === "--m8") {
         .map((el) => el.getAttribute("data-group"));
     const styleText = () => styleHost()?.textContent || "";
 
+    // 键盘：jsdom 没有 visualViewport，这里造一个可手动改高度的替身，
+    // 用来验证「弹键盘 → 收起底部三栏 → 收键盘 → 还原」这条路
+    let vvHeight = 844;
+    const vvListeners = {resize: [], scroll: []};
+    Object.defineProperty(win, "visualViewport", {
+        configurable: true,
+        value: {
+            get height() { return vvHeight; },
+            get width() { return 390; },
+            addEventListener: (type, fn) => {
+                if (!vvListeners[type]) vvListeners[type] = [];
+                vvListeners[type].push(fn);
+            },
+            removeEventListener: () => {},
+        },
+    });
+    const setViewportHeight = (h) => {
+        vvHeight = h;
+        for (const fn of vvListeners.resize || []) fn();
+    };
+
     const d = makeDetail();
     listeners.get("open-menu-image")?.({detail: d.detail});
     d.getItem()?.click();
@@ -4516,10 +4794,24 @@ if (process.argv[3] === "--m8") {
 
     // 切到文字：颜色 + 字号，不再有粗细
     click('.annot-mobile-rail button[data-tool="text"]');
-    check("M8 切到文字工具后，上栏换成颜色 + 字号",
+    check("M8 切到文字工具后，第二行只留颜色 + 字号（字体已搬去顶栏）",
         styleGroups().join(",") === "colors,fonts" &&
-        styleText().includes("字号") && !styleText().includes("粗细"),
+        styleText().includes("字号") && !styleText().includes("字体") && !styleText().includes("粗细"),
         `${styleGroups().join(",")} / ${styleText().slice(0, 30)}`);
+    {
+        const t1 = q('[data-role="mobile-topbar"] button[data-action="font-pop"]');
+        check("M8 文字工具的字体入口在顶部悬浮栏", !!t1, t1 ? t1.textContent.trim() : "没找到");
+        t1?.click();
+        await tick();
+        const pop = q('[data-role="font-pop"]');
+        check("M8 点顶栏字体按钮能真的弹出面板，顶部是上传入口",
+            !!pop && pop.firstElementChild?.getAttribute("data-action") === "font-upload" &&
+            !!q('[data-role="mobile-font-host"]'),
+            pop ? `面板首项=${pop.firstElementChild?.getAttribute("data-action")}` : "面板没出现");
+        q('[data-role="mobile-topbar"] button[data-action="font-pop"]')?.click();
+        await tick();
+        check("M8 再点一下字体按钮收起面板", !q('[data-role="font-pop"]'));
+    }
 
     // 切到矩形：颜色 + 粗细 + 填充 + 圆角（圆角与 ShareX 一样只给矩形）
     click('.annot-mobile-rail button[data-tool="rect"]');
@@ -4550,6 +4842,9 @@ if (process.argv[3] === "--m8") {
     check("M8 手机端马赛克顶栏有「识别」开关",
         !!q('[data-role="mobile-topbar"] [data-action="smart-select"]'),
         String(!!q('[data-role="mobile-topbar"] [data-action="smart-select"]')));
+    check("M8 独一根滑块撑满整行，右侧不留空",
+        q('[data-role="mobile-style"]')?.classList.contains("annot-mobile-style__scroll--fill"),
+        String(q('[data-role="mobile-style"]')?.className));
     if (mosaicRange()) {
         mosaicRange().value = "30";
         mosaicRange().dispatchEvent(new win.Event("input", {bubbles: true, cancelable: true}));
@@ -4563,6 +4858,20 @@ if (process.argv[3] === "--m8") {
         styleGroups().join(",") === "blurRadius" &&
         !!q('[data-role="mobile-style"] input[data-ctx="blurRadius"]'),
         styleGroups().join(","));
+    click('.annot-mobile-rail button[data-tool="spotlight"]');
+    const spotRange = () => q('[data-role="mobile-style"] input[data-ctx="spotlightOpacity"]');
+    check("M8 切到聚光灯后，上栏出现「暗度」滑块",
+        styleGroups().join(",") === "spotlightOpacity" && !!spotRange() &&
+        !!q('[data-role="mobile-style"] [data-role="m-spotlightOpacity"]'),
+        `${styleGroups().join(",")} / ${q('[data-role="m-spotlightOpacity"]')?.textContent ?? ""}`);
+    if (spotRange()) {
+        spotRange().value = "40";
+        spotRange().dispatchEvent(new win.Event("input", {bubbles: true, cancelable: true}));
+        spotRange().dispatchEvent(new win.Event("change", {bubbles: true, cancelable: true}));
+        check("M8 聚光灯暗度调到 40%，右侧读数带百分号",
+            q('[data-role="m-spotlightOpacity"]')?.textContent === "40%",
+            String(q('[data-role="m-spotlightOpacity"]')?.textContent));
+    }
 
     // 2) 点颜色：真正改到当前样式，并重新高亮
     click('.annot-mobile-rail button[data-tool="arrow"]');
@@ -4979,17 +5288,19 @@ if (process.argv[3] === "--m8") {
     // 序号：手机上也能换编号格式与引线端点（不然默认被改成罗马数字就回不去了）
     click('.annot-mobile-rail button[data-tool="number"]');
     await tick();
-    check("M8 切到序号后，上栏出现编号格式与端点",
-        styleGroups().join(",") === "colors,numbers,fonts" &&
-        styleText().includes("编号") && styleText().includes("端点"),
-        styleGroups().join(","));
-    const formatChips = () => all('[data-action="number-format-pick"]');
-    const tipChips = () => all('[data-action="number-tip"]');
-    check("M8 序号的编号格式 5 项、端点 3 项，没有双头与竖线",
-        formatChips().length === 5 && tipChips().length === 3 &&
-        tipChips().map((b) => b.getAttribute("data-value")).join(",") === "arrow,dot,square",
-        `${formatChips().length}/${tipChips().length}`);
-    click('[data-action="number-format-pick"][data-value="roman"]');
+    check("M8 切到序号后，第二行不再有编号 / 端点（已搬去顶栏）",
+        styleGroups().join(",") === "colors,fonts" &&
+        !styleText().includes("编号") && !styleText().includes("端点"),
+        `${styleGroups().join(",")} / ${styleText().slice(0, 30)}`);
+    const topBtns = () => all('[data-role="mobile-topbar"] .annot-mobile-topbar__btn');
+    check("M8 序号顶栏第一个按钮就是样式切换",
+        topBtns()[0]?.getAttribute("data-pop") === "numberBubble",
+        topBtns().map((b) => b.getAttribute("data-action") ?? b.getAttribute("data-pop")).join(","));
+    click('[data-role="mobile-topbar"] button[data-pop="numberFormat"]');
+    await tick();
+    const formatChips = () => all('[data-role="mobile-pop"] [data-action="number-format-pick"]');
+    check("M8 顶栏「编号」气泡给 5 种格式", formatChips().length === 5, String(formatChips().length));
+    click('[data-role="mobile-pop"] [data-action="number-format-pick"][data-value="roman"]');
     await tick();
     tapAt(300, 300);
     await tick();
@@ -5006,7 +5317,14 @@ if (process.argv[3] === "--m8") {
         svg.dispatchEvent(touch("pointermove", b.x, b.y, 1));
         svg.dispatchEvent(touch("pointerup", b.x, b.y, 1));
     };
-    click('[data-action="number-tip"][data-value="dot"]');
+    click('[data-role="mobile-topbar"] button[data-pop="numberTip"]');
+    await tick();
+    const tipChips = () => all('[data-role="mobile-pop"] [data-action="number-tip"]');
+    check("M8 序号的端点 3 项，没有双头与竖线",
+        tipChips().length === 3 &&
+        tipChips().map((b) => b.getAttribute("data-value")).join(",") === "arrow,dot,square",
+        String(tipChips().length));
+    click('[data-role="mobile-pop"] [data-action="number-tip"][data-value="dot"]');
     await tick();
     dragAt(360, 420, 460, 470);
     await tick();
@@ -5017,12 +5335,87 @@ if (process.argv[3] === "--m8") {
     };
     check("M8 端点为圆点时，引线末端是实心圆点",
         !!lastNumberGroup()?.querySelector("circle.annot-head"), "circle.annot-head");
-    click('[data-action="number-tip"][data-value="square"]');
+    click('[data-role="mobile-topbar"] button[data-pop="numberTip"]');
+    await tick();
+    click('[data-role="mobile-pop"] [data-action="number-tip"][data-value="square"]');
     await tick();
     dragAt(360, 560, 460, 610);
     await tick();
     check("M8 端点为方点时，引线末端是实心方块",
         !!lastNumberGroup()?.querySelector("rect.annot-head"), "rect.annot-head");
+
+    // 顶栏「样式」：四选一，选完按钮标签与高亮必须立刻跟上
+    {
+        const styleBtn = () => q('[data-role="mobile-topbar"] button[data-pop="numberBubble"]');
+        const styleLabel = () => styleBtn()?.querySelector("span")?.textContent.trim() ?? "";
+        const styleCells = () => Array.from(
+            q('[data-role="mobile-pop"]')?.querySelectorAll('[data-action="number-bubble"]') ?? []);
+        check("M8 序号样式按钮初始为「实心」且带数字 1 缩略图",
+            styleLabel() === "实心" && styleBtn()?.querySelector("svg text")?.textContent === "1",
+            `${styleLabel()} / ${styleBtn()?.querySelector("svg text")?.textContent}`);
+
+        styleBtn()?.click();
+        await tick();
+        check("M8 样式面板给四种样式，顺序固定",
+            styleCells().map((c) => c.getAttribute("data-value")).join(",") === "solid,hollow,pointer,plain",
+            styleCells().map((c) => c.getAttribute("data-value")).join(","));
+
+        styleCells().find((c) => c.getAttribute("data-value") === "hollow")?.click();
+        await tick();
+        check("M8 选完空心圆：标签变「空心」，顶栏给填充 + 端点，没有透明档",
+            styleLabel() === "空心" &&
+            !!q('[data-role="mobile-topbar"] [data-action="number-color"][data-value="fillColor"]') &&
+            !q('[data-role="mobile-topbar"] [data-action="number-fill-none"]') &&
+            !!q('[data-role="mobile-topbar"] button[data-pop="numberTip"]') &&
+            !q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]'),
+            styleLabel());
+
+        styleBtn()?.click();
+        await tick();
+        styleCells().find((c) => c.getAttribute("data-value") === "pointer")?.click();
+        await tick();
+        check("M8 选完定位：标签变「定位」，顶栏换成引线 + 圆头 + 填充",
+            styleLabel() === "定位" &&
+            !!q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]') &&
+            !!q('[data-role="mobile-topbar"] button[data-action="number-round-toggle"]') &&
+            !!q('[data-role="mobile-topbar"] [data-action="number-color"][data-value="fillColor"]') &&
+            !q('[data-role="mobile-topbar"] button[data-pop="numberTip"]'),
+            styleLabel());
+
+        const leader = () => q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]');
+        const leaderOnBefore = leader()?.classList.contains("is-on");
+        leader()?.click();
+        await tick();
+        check("M8 引线开关点一下状态立刻反过来",
+            leader()?.classList.contains("is-on") === !leaderOnBefore,
+            `${leaderOnBefore} -> ${leader()?.classList.contains("is-on")}`);
+
+        const roundBtn = () => q('[data-role="mobile-topbar"] button[data-action="number-round-toggle"]');
+        const roundBefore = roundBtn()?.classList.contains("is-on");
+        roundBtn()?.click();
+        await tick();
+        check("M8 圆头开关点一下状态立刻反过来",
+            roundBtn()?.classList.contains("is-on") === !roundBefore,
+            `${roundBefore} -> ${roundBtn()?.classList.contains("is-on")}`);
+
+        styleBtn()?.click();
+        await tick();
+        styleCells().find((c) => c.getAttribute("data-value") === "plain")?.click();
+        await tick();
+        check("M8 选完纯数字：标签变「数字」，只剩编号与端点",
+            styleLabel() === "数字" &&
+            !q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]') &&
+            !q('[data-role="mobile-topbar"] [data-action="number-color"]') &&
+            !!q('[data-role="mobile-topbar"] button[data-pop="numberFormat"]') &&
+            !!q('[data-role="mobile-topbar"] button[data-pop="numberTip"]'),
+            styleLabel());
+
+        styleBtn()?.click();
+        await tick();
+        styleCells().find((c) => c.getAttribute("data-value") === "solid")?.click();
+        await tick();
+        check("M8 再选回实心圆", styleLabel() === "实心", styleLabel());
+    }
 
     // 9) 触屏「停顿自动矫正」：停住 0.3 秒 → 吸附；继续滑 → 解除
     {
@@ -5151,6 +5544,187 @@ if (process.argv[3] === "--m8") {
         `stroke=${mobileHighlightShape?.getAttribute("stroke")} fill=${mobileHighlightShape?.getAttribute("fill")}`);
     check("v1.1.0 手机端矩形高亮也能选中并出现缩放手柄",
         !!win.document.querySelector('[data-handle="resize:se"]'));
+
+    // 双端一致：手机上拿着矩形工具，按在已有同类矩形里也是「选中它」而不是再叠一个
+    {
+        const countNow = () => layer()?.querySelectorAll("g.annot-object:not(.is-preview)").length ?? 0;
+        const lastObj = () => Array.from(
+            layer()?.querySelectorAll("g.annot-object:not(.is-preview)") ?? []).pop();
+        const dragTouch = (a, b, id) => {
+            const from = toClient(a.x, a.y);
+            const to = toClient(b.x, b.y);
+            svg.dispatchEvent(touch("pointerdown", from.x, from.y, id));
+            svg.dispatchEvent(touch("pointermove", (from.x + to.x) / 2, (from.y + to.y) / 2, id));
+            svg.dispatchEvent(touch("pointerup", to.x, to.y, id));
+        };
+        click('.annot-mobile-rail button[data-tool="rect"]');
+        await tick();
+        const beforeRect = countNow();
+        dragTouch({x: 620, y: 180}, {x: 780, y: 300}, 71);
+        const rectId = lastObj()?.getAttribute("data-object-id");
+        check("v1.2.0-alpha.19 移动端：先画一个矩形备用",
+            countNow() === beforeRect + 1 && !!rectId, `${beforeRect} -> ${countNow()}`);
+
+        click('.annot-mobile-rail button[data-tool="rect"]');
+        await tick();
+        dragTouch({x: 660, y: 220}, {x: 740, y: 280}, 72);
+        check("v1.2.0-alpha.19 移动端：同类对象内按下不再叠一个新矩形",
+            countNow() === beforeRect + 1, `${countNow()} 个`);
+        check("v1.2.0-alpha.19 移动端：同类对象内按下改为选中原来那个",
+            !!layer()?.querySelector(`g.annot-object.is-selected[data-object-id="${rectId}"]`),
+            `选中=${layer()?.querySelectorAll("g.annot-object.is-selected").length}`);
+
+        // 不同类型照常画：在同一个矩形上画箭头
+        click('.annot-mobile-rail button[data-tool="arrow"]');
+        await tick();
+        const beforeArrow = countNow();
+        dragTouch({x: 660, y: 220}, {x: 740, y: 280}, 73);
+        check("v1.2.0-alpha.19 移动端：在矩形上画箭头正常生成",
+            countNow() === beforeArrow + 1, `${beforeArrow} -> ${countNow()}`);
+    }
+
+    // 键盘弹起：底部三栏必须整块收起（锁定高度 + is-keyboard）
+    {
+        click('.annot-mobile-rail button[data-tool="text"]');
+        await tick();
+        tapAt(240, 360);
+        await tick();
+        check("M8 文字工具点一下出现输入框", !!q(".annot-text-editor"),
+            String(!!q(".annot-text-editor")));
+        // 进入输入态：只锁高度，工具条留在原位（键盘会盖住它，收起来自然可见）
+        check("M8 文字输入态锁住界面高度，工具条不被移除",
+            !!q(".annot-root")?.classList.contains("is-keyboard") &&
+            !!q(".annot-mobile-rail"),
+            String(q(".annot-root")?.className));
+        setViewportHeight(500);
+        await tick();
+        const kbRoot = q(".annot-root");
+        check("M8 键盘弹出后锁住高度，画面不跟着挤",
+            !!kbRoot?.classList.contains("is-keyboard") &&
+            !!kbRoot?.style.getPropertyValue("--annot-lock-h"),
+            `lock=${kbRoot?.style.getPropertyValue("--annot-lock-h")}`);
+        // 切回别的工具 = 结束输入，三栏立刻回来
+        click('.annot-mobile-rail button[data-tool="rect"]');
+        await tick();
+        setViewportHeight(844);
+        await tick();
+        check("M8 结束输入后三栏自动回来",
+            !q(".annot-root")?.classList.contains("is-keyboard"),
+            String(q(".annot-root")?.className));
+
+        // 编辑中点画布：只把这段收尾，不再凭空多一个空文字对象
+        const objCount = () => layer()?.querySelectorAll("g.annot-object:not(.is-preview)").length ?? 0;
+        click('.annot-mobile-rail button[data-tool="text"]');
+        await tick();
+        const beforeFirst = objCount();
+        tapAt(300, 420);
+        await tick();
+        const liveEditor = q(".annot-text-editor");
+        check("M8 文字工具点一下就能开始写", !!liveEditor,
+            `${beforeFirst} -> ${objCount()} / editor=${!!liveEditor}`);
+        if (liveEditor) {
+            liveEditor.value = "测试";
+            liveEditor.dispatchEvent(new win.Event("input", {bubbles: true}));
+        }
+        await tick();
+        const beforeTap = objCount();
+        const editorBeforeTap = !!q(".annot-text-editor");
+        tapAt(700, 520);
+        await tick();
+        check("M8 编辑中点别处只收尾，不再新建空文字",
+            objCount() === beforeTap && !q(".annot-text-editor"),
+            `${beforeTap} -> ${objCount()} / 点前有输入框=${editorBeforeTap} / 点后=${!!q(".annot-text-editor")}`);
+
+        // 输入框被键盘挡住时才上抬，且只补「超出可视区」的那一截
+        {
+            click('.annot-mobile-rail button[data-tool="text"]');
+            await tick();
+            tapAt(900, 700);
+            await tick();
+            const ed = q(".annot-text-editor");
+            const stageEl = q(".annot-stage");
+            if (ed && stageEl) {
+                const rect = (top, height) => ({
+                    top, bottom: top + height, left: 0, right: 200, width: 200, height, x: 0, y: top,
+                    toJSON: () => ({}),
+                });
+                ed.getBoundingClientRect = () => rect(700, 60);
+                stageEl.getBoundingClientRect = () => rect(0, 844);
+                setViewportHeight(500);
+                await tick();
+                // 可视底 = 500 - 8 = 492，输入框底边 760，超出 268
+                check("M8 键盘挡住输入框时按超出量上抬，不会越抬越偏",
+                    (ed.style.transform || "").includes("-268"), ed.style.transform || "(空)");
+                setViewportHeight(844);
+                await tick();
+                check("M8 键盘收起后输入框位置归零", !ed.style.transform, ed.style.transform || "(空)");
+            }
+        }
+
+        // 文字输入态下双指仍要能缩放（第 2 根手指不能被「结束输入」拦掉）
+        {
+            click('.annot-mobile-rail button[data-tool="text"]');
+            await tick();
+            tapAt(300, 240);
+            await tick();
+            const zoomBefore = readViewport().zoom;
+            svg.dispatchEvent(touch("pointerdown", 120, 400, 81));
+            svg.dispatchEvent(touch("pointerdown", 280, 400, 82));
+            // 两根手指要连续分开几次，第一下只用来判定「这是缩放」而不是「按住当 Shift」
+            for (let step = 1; step <= 4; step++) {
+                svg.dispatchEvent(touch("pointermove", 120 - step * 15, 400, 81));
+                svg.dispatchEvent(touch("pointermove", 280 + step * 15, 400, 82));
+            }
+            const zoomAfter = readViewport().zoom;
+            svg.dispatchEvent(touch("pointerup", 60, 400, 81));
+            svg.dispatchEvent(touch("pointerup", 340, 400, 82));
+            await tick();
+            check("M8 文字输入态下双指仍能缩放画面",
+                zoomAfter > zoomBefore * 1.15,
+                `${zoomBefore.toFixed(2)} -> ${zoomAfter.toFixed(2)}`);
+        }
+
+        // 文字工具下双指：撤掉首指点出来的空文字
+        {
+            const countAll = () => layer()?.querySelectorAll("g.annot-object:not(.is-preview)").length ?? 0;
+            click('.annot-mobile-rail button[data-tool="text"]');
+            await tick();
+            const before = countAll();
+            svg.dispatchEvent(touch("pointerdown", 120, 300, 83));
+            svg.dispatchEvent(touch("pointerdown", 280, 300, 84));
+            svg.dispatchEvent(touch("pointermove", 60, 300, 83));
+            svg.dispatchEvent(touch("pointermove", 340, 300, 84));
+            svg.dispatchEvent(touch("pointerup", 60, 300, 83));
+            svg.dispatchEvent(touch("pointerup", 340, 300, 84));
+            await tick();
+            check("M8 文字工具下双指缩放不会留下空文字",
+                countAll() === before && !q(".annot-text-editor"),
+                `${before} -> ${countAll()} / editor=${!!q(".annot-text-editor")}`);
+        }
+
+        // 缩放时不许整幅重建：图形节点保持同一个引用，选中框也不会闪
+        {
+            click('[data-action="mobile-select"]');
+            await tick();
+            tapAt(200, 300);
+            await tick();
+            const nodeBefore = layer()?.querySelector("g.annot-object");
+            const zoomBefore = readViewport().zoom;
+            svg.dispatchEvent(touch("pointerdown", 120, 400, 91));
+            svg.dispatchEvent(touch("pointerdown", 280, 400, 92));
+            for (let step = 1; step <= 4; step++) {
+                svg.dispatchEvent(touch("pointermove", 120 - step * 15, 400, 91));
+                svg.dispatchEvent(touch("pointermove", 280 + step * 15, 400, 92));
+            }
+            check("M8 双指缩放只改变换、不重建对象节点（画面不闪）",
+                layer()?.querySelector("g.annot-object") === nodeBefore &&
+                readViewport().zoom > zoomBefore * 1.15,
+                `节点相同=${layer()?.querySelector("g.annot-object") === nodeBefore} / zoom ${zoomBefore.toFixed(2)} -> ${readViewport().zoom.toFixed(2)}`);
+            svg.dispatchEvent(touch("pointerup", 60, 400, 91));
+            svg.dispatchEvent(touch("pointerup", 340, 400, 92));
+            await tick();
+        }
+    }
 
     click('[data-action="close"]');
     await tick();
