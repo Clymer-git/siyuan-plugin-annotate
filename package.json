@@ -1,6 +1,6 @@
 {
   "name": "siyuan-plugin-annotate",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "思源笔记图片标注插件 —— PNG 内嵌工程数据、可反复二次编辑",
   "type": "module",

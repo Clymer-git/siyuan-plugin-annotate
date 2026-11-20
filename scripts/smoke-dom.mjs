@@ -346,6 +346,36 @@ if (process.argv[3] === "--arrow") {
     check("M2 重开后不保留标注（尚未持久化，预期行为）", objectCount() === 0, `${objectCount()} 个`);
     check("M2 重开后对象层存在且为空", !!objectsLayer() && objectsLayer().childElementCount === 0);
 
+    // 8.5) 现代样式掰弯：杆的粗细必须保持不变（几何杆换成加粗描边）
+    {
+        click('button[data-tool="arrow"]');
+        click('[data-action="arrow-type-toggle"]');
+        click('[data-role="arrow-type-picker"] .annot-arrow-picker__item[data-value="modern"]');
+        ptr("pointerdown", {x: 100, y: 500});
+        ptr("pointermove", {x: 300, y: 500});
+        ptr("pointerup", {x: 500, y: 500});
+        const lastObj = () => Array.from(
+            objectsLayer()?.querySelectorAll("g.annot-object:not(.is-preview)") ?? []).pop();
+        const lw = Number(lastObj()?.querySelector(".annot-head")?.getAttribute("stroke-width"));
+        click('button[data-tool="select"]');
+        const mid = {x: 300, y: 500};
+        ptr("pointerdown", mid, lastObj()?.querySelector('[data-role="hit"]'));
+        ptr("pointerup", mid);
+        const curveDot = overlayLayer()?.querySelector('[data-handle="curve"] circle');
+        ptr("pointerdown", mid, curveDot);
+        ptr("pointermove", {x: 300, y: 380});
+        ptr("pointerup", {x: 300, y: 380});
+        const shaftEl = lastObj()?.querySelector(".annot-shape");
+        check("M2 现代箭头掰弯后杆是填色多边形（保留尾细头粗），不再靠加粗描边",
+            !!shaftEl &&
+            !!shaftEl.getAttribute("fill") && shaftEl.getAttribute("fill") !== "none" &&
+            Number(shaftEl.getAttribute("stroke-width")) === lw &&
+            (shaftEl.getAttribute("d")?.match(/L /g) || []).length > 20,
+            `fill=${shaftEl?.getAttribute("fill")} width=${shaftEl?.getAttribute("stroke-width")}`);
+        check("M2 掰弯后头部仍是三角形，尺寸未变",
+            !!lastObj()?.querySelector(".annot-head") && !!shaftEl);
+    }
+
     // 9) Esc：先退出当前操作，再按一次才关闭窗口
     click('button[data-tool="arrow"]');
     key("Escape");
@@ -441,8 +471,8 @@ if (process.argv[3] === "--m3") {
                 !!bubbleBtn("solid")?.getAttribute("title"),
                 `span=${!!bubbleBtn("solid")?.querySelector("span")} / ${bubbleBtn("solid")?.getAttribute("title")}`);
         }
-        check("M3 实心圆显示端点、不显示引线 / 圆头 / 填充",
-            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+        check("M3 实心圆显示端点样式下拉、不显示引线 / 圆线 / 填充",
+            !!bar()?.querySelector('[data-action="number-style-toggle"]') &&
             !bar()?.querySelector('button[data-action="number-leader"]') &&
             !bar()?.querySelector('button[data-action="number-round"]') &&
             !bar()?.querySelector('[data-action="number-color"]'));
@@ -458,21 +488,21 @@ if (process.argv[3] === "--m3") {
             !!bar()?.querySelector('[data-action="number-color"][data-value="fillColor"]') &&
             !bar()?.querySelector('[data-action="number-fill-none"]') &&
             !/透明/.test(bar()?.textContent ?? "") &&
-            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+            !!bar()?.querySelector('[data-action="number-style-toggle"]') &&
             !bar()?.querySelector('button[data-action="number-leader"]'),
             bar()?.textContent?.slice(0, 40) ?? "");
         bubbleBtn("plain")?.click();
-        check("M3 纯数字：没有外框参数，但保留编号与端点",
-            !!bar()?.querySelector('button[data-action="number-tip"]') &&
+        check("M3 纯数字：没有外框参数，但保留编号与端点样式",
+            !!bar()?.querySelector('[data-action="number-style-toggle"]') &&
             !bar()?.querySelector('button[data-action="number-leader"]') &&
             !bar()?.querySelector('[data-action="number-color"]') &&
             !!bar()?.querySelector('[data-action="number-format-toggle"]'),
             bar()?.textContent?.slice(0, 40) ?? "");
         bubbleBtn("pointer")?.click();
-        check("M3 定位气泡：隐藏端点，给出引线 / 圆头 / 填充",
+        check("M3 定位气泡：隐藏端点，给出引线 / 圆线开关 / 填充",
             !bar()?.querySelector('button[data-action="number-tip"]') &&
             !!bar()?.querySelector('button[data-action="number-leader"]') &&
-            !!bar()?.querySelector('button[data-action="number-round"]') &&
+            !!bar()?.querySelector('button[data-action="number-round-toggle"]') &&
             !!bar()?.querySelector('[data-action="number-color"]'),
             bar()?.textContent?.slice(0, 40) ?? "");
         bubbleBtn("solid")?.click();
@@ -988,35 +1018,68 @@ if (process.argv[3] === "--m3") {
     check("PC 悬浮条：模糊显示模糊程度",
         contextBar()?.hidden === false && !!contextBar()?.querySelector('[data-ctx="blurRadius"]'));
     click('button[data-tool="arrow"]');
-    const stylePicker = () => q('[data-role="arrow-picker"]');
-    const pickStyle = (key) => {
-        if (!stylePicker()?.classList.contains("is-open")) click('[data-action="arrow-picker-toggle"]');
-        click(`.annot-arrow-picker__item[data-value="${key}"]`);
+    const headGroup = () => q('[data-role="arrow-head-group"]');
+    const typePickerEl = () => q('[data-role="arrow-type-picker"]');
+    const pickType = (key) => {
+        if (!typePickerEl()?.classList.contains("is-open")) click('[data-action="arrow-type-toggle"]');
+        click(`[data-role="arrow-type-picker"] .annot-arrow-picker__item[data-value="${key}"]`);
     };
+    const pickHead = (key) => click(`[data-role="arrow-head-group"] .annot-arrow-chip[data-value="${key}"]:not([disabled])`);
+    const LEGACY_KIND = {
+        classic: ["single", "classic"], modern: ["modern", "basic"], double: ["double", "classic"],
+        basic: ["single", "basic"], line: ["single", "open"], bar: ["bar", "none"],
+        barDouble: ["bar", "basic"],
+    };
+    const pickStyle = (key) => {
+        const [type, head] = LEGACY_KIND[key] ?? ["single", "classic"];
+        pickType(type);
+        pickHead(head);
+    };
+    const headChips = () => Array.from(headGroup()?.querySelectorAll(".annot-arrow-chip") ?? []);
     const lastGroup = () => Array.from(layer()?.querySelectorAll("g.annot-object:not(.is-preview)") ?? []).pop();
-    check("PC 悬浮条：箭头样式改成自定义下拉，共 7 项，不再是一排按钮，也没有原生 select",
-        contextBar()?.hidden === false && !!stylePicker() &&
-        stylePicker()?.querySelectorAll(".annot-arrow-picker__item").length === 7 &&
-        !contextBar()?.querySelector("select[data-action='arrow-style-select']") &&
-        contextBar()?.querySelectorAll('[data-action="arrow-style"]').length === 0);
-    check("PC 下拉里是 ShareX 五种 + 保留的两种竖线连接线，旧样式已替换",
-        ["classic", "modern", "double", "basic", "line", "bar", "barDouble"].every((k) =>
-            !!stylePicker()?.querySelector(`.annot-arrow-picker__item[data-value="${k}"]`)) &&
-        !stylePicker()?.querySelector('[data-value="single"]') &&
-        !stylePicker()?.querySelector('[data-value="gradient"]') &&
-        !stylePicker()?.querySelector('[data-value="outline"]'));
-    check("PC 下拉每一项、以及按钮本身都同时有文字与图案",
-        Array.from(stylePicker()?.querySelectorAll(".annot-arrow-picker__item") ?? []).every((item) =>
-            !!item.querySelector(".annot-arrow-picker__item-label")?.textContent?.trim() &&
-            !!item.querySelector(".annot-arrow-picker__icon > svg.annot-arrow-style-icon")) &&
-        !!stylePicker()?.querySelector(".annot-arrow-picker__label")?.textContent?.trim() &&
-        !!stylePicker()?.querySelector(".annot-arrow-picker__icon > svg.annot-arrow-style-icon") &&
-        css.includes(".annot-arrow-picker__menu"));
-    // 用下拉切到双头
+    check("PC 悬浮条：类型是下拉、样式是横排图标，没有原生 select",
+        contextBar()?.hidden === false && !!typePickerEl() && !!headGroup() &&
+        !!typePickerEl()?.querySelector(".annot-arrow-picker__menu") &&
+        !contextBar()?.querySelector("select") &&
+        css.includes(".annot-arrow-group") && css.includes(".annot-arrow-chip"));
+    check("类型四项齐全，端点固定六格（无箭头也在，只是置灰）",
+        ["single", "double", "modern", "bar"].every((k) =>
+            !!typePickerEl()?.querySelector(`.annot-arrow-picker__item[data-value="${k}"]`)) &&
+        headChips().map((el) => el.getAttribute("data-value")).join(",") ===
+        "none,basic,classic,open,rhombus,circle",
+        headChips().map((el) => el.getAttribute("data-value")).join(","));
+    check("单头下「无箭头」置灰，菱形与圆形可用",
+        !!headGroup()?.querySelector('.annot-arrow-chip[data-value="none"]:disabled') &&
+        !headGroup()?.querySelector('.annot-arrow-chip[data-value="rhombus"]:disabled') &&
+        !headGroup()?.querySelector('.annot-arrow-chip[data-value="circle"]:disabled'));
+    check("每个样式格都带图案与提示文字",
+        Array.from(headGroup()?.querySelectorAll(".annot-arrow-chip") ?? []).every((item) =>
+            !!item.querySelector("svg.annot-arrow-style-icon") &&
+            !!item.getAttribute("title") && !!item.getAttribute("aria-label")));
+
+    // 切换类型：置灰项要跟着变，而不是消失
     pickStyle("double");
-    check("PC 下拉切换后按钮文字与选中项同步",
-        stylePicker()?.querySelector(".annot-arrow-picker__label")?.textContent === "双头" &&
-        stylePicker()?.querySelector('.annot-arrow-picker__item[data-value="double"]')?.getAttribute("aria-selected") === "true");
+    check("切到双头后，下拉文字变成「双头」、样式高亮落在「燕尾」上",
+        typePickerEl()?.querySelector(".annot-arrow-picker__label")?.textContent === "双头" &&
+        !!headGroup()?.querySelector('.annot-arrow-chip[data-value="classic"].is-active'));
+    {
+        pickType("modern");
+        const disabled = (key) => !!headGroup()?.querySelector(`.annot-arrow-chip[data-value="${key}"]:disabled`);
+        check("尖尾下开放/菱形/圆形/无箭头全部置灰，但仍留在界面上",
+            disabled("open") && disabled("rhombus") && disabled("circle") && disabled("none") &&
+            !disabled("basic") && !disabled("classic") &&
+            headChips().length === 6,
+            headChips().map((el) => `${el.getAttribute("data-value")}${el.disabled ? "(灰)" : ""}`).join(","));
+        pickType("bar");
+        const disabledBar = (key) => !!headGroup()?.querySelector(`.annot-arrow-chip[data-value="${key}"]:disabled`);
+        check("两端竖线下放开「无箭头」，开放/菱形/圆形仍置灰",
+            !disabledBar("none") && !disabledBar("basic") && !disabledBar("classic") &&
+            disabledBar("open") && disabledBar("rhombus") && disabledBar("circle"));
+        // 还原成双头：后面的绘制用例依赖它
+        pickType("double");
+        pickHead("classic");
+    }
+
     draw("arrow", {x: 700, y: 500}, {x: 820, y: 560});
     check("PC 双头箭头真的画出两个箭头头部",
         (lastGroup()?.querySelectorAll("path.annot-head").length ?? 0) === 2,
@@ -2681,22 +2744,30 @@ if (process.argv[3] === "--ui") {
 
     // --- v0.14.0：箭头样式顺序 / 点划线 / 画线悬浮条 / 自定义颜色预设 ---
     {
-        // 1) 箭头下拉第一项是「基础」
+        // 1) 1.3.0 起拆成「类型」与「样式」两个下拉
         drawUI("arrow", {x: 120, y: 600}, {x: 260, y: 660});
         await settleUI();
-        click('[data-action="arrow-picker-toggle"]');
-        const arrowItems = Array.from(q(".annot-arrow-picker__menu")?.querySelectorAll(".annot-arrow-picker__item") ?? []);
-        check("UI 箭头样式下拉第一项是「基础」",
-            arrowItems[0]?.getAttribute("data-value") === "basic" &&
-            (arrowItems[0]?.textContent || "").includes("基础"),
-            `${arrowItems[0]?.getAttribute("data-value")} / ${arrowItems[0]?.textContent}`);
-        check("UI 箭头七种样式的顺序为 基础 → 经典 → 现代 → 双头 → 线条 → 两端竖线 → 竖线双头",
-            arrowItems.map((el) => el.getAttribute("data-value")).join(",") ===
-            "basic,classic,modern,double,line,bar,barDouble",
-            arrowItems.map((el) => el.getAttribute("data-value")).join(","));
-        check("UI 默认样式仍是「经典」，高亮没有跑到第一项上",
-            arrowItems[1]?.classList.contains("is-active") && !arrowItems[0]?.classList.contains("is-active"));
-        click('[data-action="arrow-picker-toggle"]');
+        const headChips = () => Array.from(q('[data-role="arrow-head-group"]')
+            ?.querySelectorAll(".annot-arrow-chip") ?? []);
+        const typeItems = () => Array.from(q('[data-role="arrow-type-picker"]')
+            ?.querySelectorAll(".annot-arrow-picker__item") ?? []);
+        check("UI 端点顺序固定为 无箭头 → 基础 → 燕尾 → 开放 → 菱形 → 圆形",
+            headChips().map((el) => el.getAttribute("data-value")).join(",") ===
+            "none,basic,classic,open,rhombus,circle",
+            headChips().map((el) => el.getAttribute("data-value")).join(","));
+        check("UI 单头下「无箭头」置灰，菱形与圆形可用",
+            !!q('[data-role="arrow-head-group"] .annot-arrow-chip[data-value="none"]:disabled') &&
+            !q('[data-role="arrow-head-group"] .annot-arrow-chip[data-value="rhombus"]:disabled'));
+        check("UI 默认端点仍是「燕尾」，高亮没有跑到别的格子上",
+            !!q('[data-role="arrow-head-group"] .annot-arrow-chip[data-value="classic"].is-active') &&
+            !q('[data-role="arrow-head-group"] .annot-arrow-chip[data-value="basic"].is-active'));
+        click('[data-action="arrow-type-toggle"]');
+        check("UI 箭头类型是下拉，顺序为 单头 → 双头 → 尖尾 → 两端竖线",
+            typeItems().map((el) => el.getAttribute("data-value")).join(",") === "single,double,modern,bar",
+            typeItems().map((el) => el.getAttribute("data-value")).join(","));
+        check("UI 默认类型是「单头」，下拉里高亮落在第一项",
+            !!q('[data-role="arrow-type-picker"] .annot-arrow-picker__item[data-value="single"].is-active'));
+        click('[data-action="arrow-type-toggle"]');
 
         // 2) 顶部属性栏：新增点划线，作用到新画的图形
         check("UI 顶部线型多出一个「中心线」",
@@ -2947,9 +3018,9 @@ if (process.argv[3] === "--ui") {
         };
         check("UI 序号工具有参数，分割线也回来了",
             bar()?.querySelectorAll(".annot-context__sep").length === 1);
-        check("UI 选中序号工具后：编号格式是下拉框（5 个选项）+ 端点 3 项 + 箭头样式下拉 + 圆线",
-            formatItems().length === 5 && tipBtns().length === 3 && styleItems().length === 7 &&
-            !!bar()?.querySelector('[data-action="arrow-rounded"]'),
+        check("UI 选中序号工具后：编号格式下拉 5 项 + 端点样式 5 项 + 末尾的圆线开关",
+            formatItems().length === 5 && styleItems().length === 5 &&
+            !!bar()?.querySelector('.annot-context__toggle[data-action="number-round-toggle"]'),
             `${formatItems().length} / ${tipBtns().length} / ${styleItems().length}`);
         check("UI 编号格式不再是一排小按钮（旧的 data-action=number-format 已移除）",
             !bar()?.querySelector('[data-action="number-format"]'));
@@ -2959,9 +3030,9 @@ if (process.argv[3] === "--ui") {
             formatItems()[0]?.classList.contains("is-active") &&
             formatButtonText() === "阿拉伯数字",
             `${formatItems().map((el) => el.getAttribute("data-value")).join(",")} · ${formatButtonText()}`);
-        check("UI 端点是箭头时，右边给出箭头样式下拉（七种，带图案），默认经典",
+        check("UI 端点是箭头时，右边给出与箭头工具同一套的端点（五种，带图案），默认燕尾",
             styleItems().map((el) => el.getAttribute("data-value")).join(",") ===
-            "basic,classic,modern,double,line,bar,barDouble" &&
+            "basic,classic,open,rhombus,circle" &&
             styleItems().some((el) => el.classList.contains("is-active")) &&
             !!styleItems()[0]?.querySelector("svg"),
             styleItems().map((el) => el.getAttribute("data-value")).join(","));
@@ -2984,10 +3055,6 @@ if (process.argv[3] === "--ui") {
         check("UI Esc 收起序号下拉，且不会顺手切走工具",
             !bar()?.querySelector('[data-role="number-style-picker"]')?.classList.contains("is-open") &&
             !!bar()?.querySelector('[data-action="number-format-toggle"]'));
-        check("UI 端点只给箭头 / 圆点 / 方点（没有双头箭头与两端竖线）",
-            tipBtns().map((el) => el.getAttribute("data-value")).join(",") === "arrow,dot,square",
-            tipBtns().map((el) => el.getAttribute("data-value")).join(","));
-
         // 只看序号：序号组里有圆点徽章 + 文字，普通文字对象两者都没有
         const numberTexts = () => Array.from(layer()?.querySelectorAll("g[data-object-id]") ?? [])
             .filter((group) => group.querySelector("circle") && group.querySelector("text.annot-shape"))
@@ -3046,25 +3113,28 @@ if (process.argv[3] === "--ui") {
             ptr("pointermove", {x: 720, y: 330});
             ptr("pointerup", {x: 800, y: 360});
         };
-        click('[data-action="number-tip"][data-value="dot"]');
+        // 端点样式：圆形 / 菱形都走同一套 arrowShape，画出来的是箭头头部
+        click('[data-action="number-style-toggle"]');
         await settleUI();
-        check("UI 端点选「圆点」后，圆线开关消失（只有箭头端点才谈得上圆线）",
-            !bar()?.querySelector('[data-action="arrow-rounded"]'));
+        click('[data-action="number-style-pick"][data-value="circle"]');
+        await settleUI();
         drawLeader("number");
         await settleUI();
-        check("UI 圆点端点：引线末端是一个实心圆点",
-            !!lastGroup()?.querySelector("circle.annot-head") &&
-            !lastGroup()?.querySelector("path.annot-head"),
-            String(lastGroup()?.querySelector("circle.annot-head")?.getAttribute("r")));
-        click('[data-action="number-tip"][data-value="square"]');
+        check("UI 端点选「圆形」：引线末端画出一个箭头头部",
+            (lastGroup()?.querySelectorAll("path.annot-head").length ?? 0) === 1);
+        click('[data-action="number-style-toggle"]');
+        await settleUI();
+        click('[data-action="number-style-pick"][data-value="rhombus"]');
+        await settleUI();
         drawLeader("number");
         await settleUI();
-        check("UI 方点端点：引线末端是一个实心方块",
-            !!lastGroup()?.querySelector("rect.annot-head") &&
-            !lastGroup()?.querySelector("circle.annot-head"));
+        check("UI 端点选「菱形」：引线末端同样是一个箭头头部",
+            (lastGroup()?.querySelectorAll("path.annot-head").length ?? 0) === 1);
 
         // 端点回到箭头：引线头部与箭头工具完全同源
-        click('[data-action="number-tip"][data-value="arrow"]');
+        click('[data-action="number-style-toggle"]');
+        await settleUI();
+        click('[data-action="number-style-pick"][data-value="classic"]');
         click('button[data-tool="arrow"]');
         await settleUI();
         click('[data-action="arrow-picker-toggle"]');
@@ -3095,21 +3165,21 @@ if (process.argv[3] === "--ui") {
             arrowGroup?.querySelector("path.annot-shape")?.getAttribute("stroke-width"),
             String(numberGroup?.querySelector("path.annot-shape")?.getAttribute("stroke-width")));
 
-        // 引线的箭头样式：下拉里选「双头」应当当场作用在这一支上
+        // 引线的端点样式：下拉里选「菱形」应当当场作用在这一支上
         const headCount = () => lastGroup()?.querySelectorAll("path.annot-head").length ?? 0;
         click('[data-action="number-style-toggle"]');
         await settleUI();
-        click('[data-action="number-style-pick"][data-value="double"]');
+        click('[data-action="number-style-pick"][data-value="rhombus"]');
         await settleUI();
-        check("UI 序号箭头样式选「双头」后，这一支引线当场变两个头部",
-            headCount() === 2 &&
-            (bar()?.querySelector('[data-role="number-style-label"]')?.textContent || "").trim() === "双头",
+        check("UI 序号端点选「菱形」后，这一支引线的箭头当场变菱形",
+            (bar()?.querySelector('[data-role="number-style-label"]')?.textContent || "").trim() === "菱形" &&
+            headCount() === 1,
             `${headCount()} 个头部 / ${bar()?.querySelector('[data-role="number-style-label"]')?.textContent}`);
         click('[data-action="number-style-toggle"]');
         await settleUI();
         click('[data-action="number-style-pick"][data-value="classic"]');
         await settleUI();
-        check("UI 换回「经典」后恢复单头", headCount() === 1, String(headCount()));
+        check("UI 换回「燕尾」后仍是单个箭头", headCount() === 1, String(headCount()));
     }
 
     // --- v0.18.0：聚光灯 / 放大镜 ---
@@ -4768,7 +4838,7 @@ if (process.argv[3] === "--m8") {
         !!q('[data-action="mobile-select"] svg.annot-icon'),
         `${iconNodes.length} 个，异常 ${badIcons.join(" / ")}`);
     check("M8 顶部保存按钮用短文案「完成」",
-        (q('.annot-mobile-top [data-action="save"]')?.textContent || "").trim() === "完成",
+        (q('.annot-mobile-top [data-action="save"]')?.textContent || "").trim() === "保存",
         String(q('.annot-mobile-top [data-action="save"]')?.textContent));
     const dialogEl = q(".annot-dialog");
     const dialogHeight = dialogEl?.style.height || "";
@@ -5317,32 +5387,25 @@ if (process.argv[3] === "--m8") {
         svg.dispatchEvent(touch("pointermove", b.x, b.y, 1));
         svg.dispatchEvent(touch("pointerup", b.x, b.y, 1));
     };
-    click('[data-role="mobile-topbar"] button[data-pop="numberTip"]');
+    click('[data-role="mobile-topbar"] button[data-pop="numberArrowStyle"]');
     await tick();
-    const tipChips = () => all('[data-role="mobile-pop"] [data-action="number-tip"]');
-    check("M8 序号的端点 3 项，没有双头与竖线",
-        tipChips().length === 3 &&
-        tipChips().map((b) => b.getAttribute("data-value")).join(",") === "arrow,dot,square",
+    const tipChips = () => all('[data-role="mobile-pop"] [data-action="number-style-pick"]');
+    check("M8 序号的端点样式 5 项，与箭头工具同一套",
+        tipChips().length === 5 &&
+        tipChips().map((b) => b.getAttribute("data-value")).join(",") === "basic,classic,open,rhombus,circle",
         String(tipChips().length));
-    click('[data-role="mobile-pop"] [data-action="number-tip"][data-value="dot"]');
-    await tick();
-    dragAt(360, 420, 460, 470);
-    await tick();
     const lastNumberGroup = () => {
         const groups = Array.from(layer()?.querySelectorAll("g[data-object-id]") ?? [])
             .filter((g) => g.querySelector("circle") && g.querySelector("text.annot-shape"));
         return groups[groups.length - 1];
     };
-    check("M8 端点为圆点时，引线末端是实心圆点",
-        !!lastNumberGroup()?.querySelector("circle.annot-head"), "circle.annot-head");
-    click('[data-role="mobile-topbar"] button[data-pop="numberTip"]');
+    click('[data-role="mobile-pop"] [data-action="number-style-pick"][data-value="rhombus"]');
     await tick();
-    click('[data-role="mobile-pop"] [data-action="number-tip"][data-value="square"]');
+    dragAt(360, 420, 460, 470);
     await tick();
-    dragAt(360, 560, 460, 610);
-    await tick();
-    check("M8 端点为方点时，引线末端是实心方块",
-        !!lastNumberGroup()?.querySelector("rect.annot-head"), "rect.annot-head");
+    check("M8 端点选菱形后，这一支引线画出箭头头部",
+        (lastNumberGroup()?.querySelectorAll("path.annot-head").length ?? 0) === 1,
+        `${lastNumberGroup()?.querySelectorAll("path.annot-head").length ?? 0} 个头`);
 
     // 顶栏「样式」：四选一，选完按钮标签与高亮必须立刻跟上
     {
@@ -5366,7 +5429,7 @@ if (process.argv[3] === "--m8") {
             styleLabel() === "空心" &&
             !!q('[data-role="mobile-topbar"] [data-action="number-color"][data-value="fillColor"]') &&
             !q('[data-role="mobile-topbar"] [data-action="number-fill-none"]') &&
-            !!q('[data-role="mobile-topbar"] button[data-pop="numberTip"]') &&
+            !!q('[data-role="mobile-topbar"] button[data-pop="numberArrowStyle"]') &&
             !q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]'),
             styleLabel());
 
@@ -5379,7 +5442,7 @@ if (process.argv[3] === "--m8") {
             !!q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]') &&
             !!q('[data-role="mobile-topbar"] button[data-action="number-round-toggle"]') &&
             !!q('[data-role="mobile-topbar"] [data-action="number-color"][data-value="fillColor"]') &&
-            !q('[data-role="mobile-topbar"] button[data-pop="numberTip"]'),
+            !q('[data-role="mobile-topbar"] button[data-pop="numberArrowStyle"]'),
             styleLabel());
 
         const leader = () => q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]');
@@ -5407,7 +5470,7 @@ if (process.argv[3] === "--m8") {
             !q('[data-role="mobile-topbar"] button[data-action="number-leader-toggle"]') &&
             !q('[data-role="mobile-topbar"] [data-action="number-color"]') &&
             !!q('[data-role="mobile-topbar"] button[data-pop="numberFormat"]') &&
-            !!q('[data-role="mobile-topbar"] button[data-pop="numberTip"]'),
+            !!q('[data-role="mobile-topbar"] button[data-pop="numberArrowStyle"]'),
             styleLabel());
 
         styleBtn()?.click();
@@ -5470,7 +5533,7 @@ if (process.argv[3] === "--m8") {
     const topbar = () => q('[data-role="mobile-topbar"]');
     const topButtons = () => all(".annot-mobile-topbar__btn");
     const popItems = () => all(".annot-mobile-pop__item");
-    check("M8 顶部悬浮栏：箭头工具下出「箭头样式 + 圆线」两枚按钮",
+    check("M8 顶部悬浮栏：箭头工具下出「箭头 + 圆线」两枚按钮",
         !!topbar() && topbar().hidden === false && topButtons().length === 2 &&
         topButtons()[0].getAttribute("data-pop") === "arrowStyle" &&
         topButtons()[1].getAttribute("data-action") === "arrow-rounded",
@@ -5478,19 +5541,28 @@ if (process.argv[3] === "--m8") {
     check("M8 顶部悬浮栏：气泡默认收起", q('[data-role="mobile-pop"]') === null);
 
     click('.annot-mobile-topbar__btn[data-pop="arrowStyle"]');
-    check("M8 点「箭头样式」弹出气泡：7 格，全部只有图案、没有文字",
-        q('[data-role="mobile-pop"]') !== null && popItems().length === 7 &&
+    check("M8 箭头气泡：类型 4 格 + 横线 + 端点 6 格",
+        q('[data-role="mobile-pop"]') !== null && popItems().length === 10 &&
+        !!q(".annot-mobile-pop__hr") &&
         popItems().every((el) => el.textContent.trim() === "") &&
         popItems().every((el) => el.querySelector("svg") !== null),
         String(popItems().length));
+    check("M8 分隔线是横线：占满一行、高度 1px",
+        css.includes(".annot-mobile-pop__hr") && css.includes("flex: 0 0 100%") &&
+        css.includes("height: 1px"));
 
     click('.annot-mobile-pop__item[data-value="modern"]');
     await tick();
-    check("M8 点气泡里的选项后自动收起", q('[data-role="mobile-pop"]') === null);
+    check("M8 点类型后气泡收起", q('[data-role="mobile-pop"]') === null);
     click('.annot-mobile-topbar__btn[data-pop="arrowStyle"]');
-    check("M8 重开气泡时高亮落在刚选的「现代」上",
-        q(".annot-mobile-pop__item.is-active")?.getAttribute("data-value") === "modern",
+    check("M8 重开气泡时类型高亮落在「尖尾」上",
+        q('.annot-mobile-pop__item[data-value="modern"]')?.classList.contains("is-active") === true,
         String(q(".annot-mobile-pop__item.is-active")?.getAttribute("data-value")));
+    check("M8 尖尾下开放/菱形/圆形/无箭头置灰但仍在",
+        !!q(".annot-mobile-pop__item[data-value='open']:disabled") &&
+        !!q(".annot-mobile-pop__item[data-value='rhombus']:disabled") &&
+        !!q(".annot-mobile-pop__item[data-value='circle']:disabled") &&
+        popItems().length === 10);
 
     click(".annot-titlebar");
     await tick();
@@ -5728,6 +5800,69 @@ if (process.argv[3] === "--m8") {
 
     click('[data-action="close"]');
     await tick();
+}
+
+// ---------------------------------------------------------------- 图片悬浮快捷入口
+if (process.argv[3] === "--quick") {
+    const q = (s) => win.document.querySelector(s);
+    const click = (el) => el?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+
+    // 照思源真实结构搭一个图片块（.img > .protyle-action.protyle-icons + img）
+    const wysiwyg = win.document.createElement("div");
+    wysiwyg.className = "protyle-wysiwyg";
+    wysiwyg.innerHTML = '<div data-node-id="202611190000000-quick" data-type="NodeParagraph" class="p">'
+        + '<div contenteditable="true"><span contenteditable="false" data-type="img" class="img">'
+        + '<span> </span><span>'
+        + '<span class="protyle-action protyle-icons">'
+        + '<span class="protyle-icon protyle-icon--only"><svg><use href="#iconMore"></use></svg></span>'
+        + '</span>'
+        + '<img src="assets/demo.png" data-src="assets/demo.png" alt="">'
+        + '</span></span></div></div>';
+    win.document.body.appendChild(wysiwyg);
+    // 指针进入图片时注入（PC 悬停 / 移动端轻点走同一条路）
+    const hoverImage = () => q('.img[data-type="img"] img')
+        ?.dispatchEvent(new win.MouseEvent("pointerover", {bubbles: true, cancelable: true}));
+    hoverImage();
+
+    const icons = q('.img[data-type="img"] .protyle-icons');
+    const button = q(".annot-quick-entry");
+    check("快捷入口：图片上注入了按钮", !!button, String(!!button));
+    hoverImage();
+    check("快捷入口：反复进入同一张图不会插出第二个按钮",
+        win.document.querySelectorAll(".annot-quick-entry").length === 1,
+        String(win.document.querySelectorAll(".annot-quick-entry").length));
+    check("快捷入口：按钮排在原生按钮组最左边",
+        icons?.firstElementChild === button,
+        String(icons?.firstElementChild?.className));
+    check("快捷入口：圆角接力（我们 --first，原生从 --only 变 --last）",
+        !!button?.classList.contains("protyle-icon--first") &&
+        !!icons?.querySelector(".protyle-icon--last") &&
+        !icons?.querySelector(".protyle-icon--only"),
+        String(icons?.innerHTML || "").slice(0, 70));
+    check("快捷入口：图标用 currentColor，没有写死颜色",
+        !!button?.querySelector('svg path[fill="currentColor"]') &&
+        !/fill="#[0-9a-fA-F]{3,6}"/.test(button?.innerHTML || "") &&
+        !/stroke="#[0-9a-fA-F]{3,6}"/.test(button?.innerHTML || ""));
+
+    // 点一下：应当直接打开编辑器，而不是弹原生菜单
+    click(button);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    check("快捷入口：点击后直接打开标注编辑器", !!q(".annot-root"),
+        String(!!q(".annot-root")));
+    q('.annot-root [data-action="close"]')?.dispatchEvent(
+        new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // 卸载后按钮要摘干净，原生圆角也要还原
+    plugin.onunload();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const iconsAfter = q('.img[data-type="img"] .protyle-icons');
+    check("快捷入口：卸载后按钮移除、原生按钮恢复 --only",
+        !q(".annot-quick-entry") &&
+        !!iconsAfter?.querySelector(".protyle-icon--only") &&
+        !iconsAfter?.querySelector(".protyle-icon--last"),
+        String(iconsAfter?.innerHTML || "").slice(0, 60));
+    plugin.onload();
 }
 
 plugin.onunload();

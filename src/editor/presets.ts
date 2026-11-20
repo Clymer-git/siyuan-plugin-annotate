@@ -1,5 +1,8 @@
-import type {ArrowStyleKey, NumberBubble} from "../types";
-import {normalizeArrowStyle} from "./arrowStyles";
+import type {ArrowHead, ArrowStyleKey, ArrowType, NumberBubble} from "../types";
+import {
+    legacyOf, legacyOfNumberHead, normalizeArrowHead, normalizeArrowStyle, normalizeArrowType,
+    numberHeadOf, resolveArrowKind,
+} from "./arrowStyles";
 import {DEFAULT_NUMBER_FORMAT, normalizeNumberFormat, type NumberFormatKey} from "./numberFormat";
 import {DEFAULT_NUMBER_TIP, normalizeNumberTip, type NumberTipKey} from "./numberTip";
 
@@ -54,6 +57,10 @@ export interface CurrentStyle {
     lineDashGap: number;
     /** 箭头工具当前选中的样式（悬浮工具条下拉框） */
     arrowStyle: ArrowStyleKey;
+    /** 箭头类型：单头 / 双头 / 尖尾 / 两端竖线 */
+    arrowType: ArrowType;
+    /** 端点图形 */
+    arrowHead: ArrowHead;
     /** 箭头端点与折角是否圆润（界面文案「圆线」） */
     arrowRounded: boolean;
     /** 画线工具的线端是否圆润（界面文案「圆线」）：关掉是方头 */
@@ -69,6 +76,7 @@ export interface CurrentStyle {
     /** 序号引线末端（箭头 / 圆点 / 方点） */
     numberTip: NumberTipKey;
     /** 序号引线用哪种箭头样式（只在端点=箭头时可见） */
+    numberArrowHead: ArrowHead;
     numberArrowStyle: ArrowStyleKey;
     /** 聚光灯周围遮罩的暗度 0~1（界面显示成百分比） */
     spotlightOpacity: number;
@@ -130,6 +138,8 @@ export const DEFAULT_CURRENT: CurrentStyle = {
     lineDash: "solid",
     lineDashGap: 6,
     arrowStyle: "classic",
+    arrowType: "single",
+    arrowHead: "classic",
     arrowRounded: true,
     lineRound: true,
     numberFormat: DEFAULT_NUMBER_FORMAT,
@@ -137,6 +147,7 @@ export const DEFAULT_CURRENT: CurrentStyle = {
     numberRound: true,
     numberLeader: true,
     numberTip: DEFAULT_NUMBER_TIP,
+    numberArrowHead: "classic",
     numberArrowStyle: "classic",
     spotlightOpacity: 0.6,
     spotlightShape: "rect",
@@ -266,7 +277,15 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
             lineDash: dash === "dashed" || dash === "dotted" || dash === "dashdot"
                 ? dash : base.lineDash,
             lineDashGap: number(parsed.lineDashGap, base.lineDashGap, 1, 20),
-            arrowStyle: normalizeArrowStyle(parsed.arrowStyle, base.arrowStyle),
+            ...(() => {
+                // 旧预设只有 arrowStyle：按映射还原成「类型 + 端点」，再写回 ArrowStyle
+                const kind = resolveArrowKind({
+                    arrowType: normalizeArrowType(parsed.arrowType, base.arrowType),
+                    arrowHead: normalizeArrowHead(parsed.arrowHead, base.arrowHead),
+                    arrowStyle: normalizeArrowStyle(parsed.arrowStyle, base.arrowStyle),
+                });
+                return {arrowType: kind.type, arrowHead: kind.head, arrowStyle: legacyOf(kind)};
+            })(),
             arrowRounded: parsed.arrowRounded !== false,
             lineRound: parsed.lineRound !== false,
             numberFormat: normalizeNumberFormat(parsed.numberFormat, base.numberFormat),
@@ -274,7 +293,14 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
             numberRound: parsed.numberRound !== false,
             numberLeader: parsed.numberLeader !== false,
             numberTip: normalizeNumberTip(parsed.numberTip, base.numberTip),
-            numberArrowStyle: normalizeArrowStyle(parsed.numberArrowStyle, base.numberArrowStyle),
+            // 旧预设只有 numberArrowStyle：还原成端点，再写回旧字段
+            ...(() => {
+                const head = numberHeadOf({
+                    numberArrowHead: parsed.numberArrowHead as ArrowHead | undefined,
+                    numberArrowStyle: normalizeArrowStyle(parsed.numberArrowStyle, base.numberArrowStyle),
+                });
+                return {numberArrowHead: head, numberArrowStyle: legacyOfNumberHead(head)};
+            })(),
             spotlightOpacity: number(parsed.spotlightOpacity, base.spotlightOpacity, 0, 0.95),
             spotlightShape: parsed.spotlightShape === "ellipse" || parsed.spotlightShape === "rect"
                 ? parsed.spotlightShape : base.spotlightShape,
@@ -310,6 +336,8 @@ export function saveCurrentStyle(style: CurrentStyle): void {
             lineDash: style.lineDash,
             lineDashGap: style.lineDashGap,
             arrowStyle: style.arrowStyle,
+            arrowType: style.arrowType,
+            arrowHead: style.arrowHead,
             arrowRounded: style.arrowRounded,
             lineRound: style.lineRound,
             numberFormat: style.numberFormat,
@@ -317,6 +345,7 @@ export function saveCurrentStyle(style: CurrentStyle): void {
             numberRound: style.numberRound,
             numberLeader: style.numberLeader,
             numberTip: style.numberTip,
+            numberArrowHead: style.numberArrowHead,
             numberArrowStyle: style.numberArrowStyle,
             spotlightOpacity: style.spotlightOpacity,
             spotlightShape: style.spotlightShape,

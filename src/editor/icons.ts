@@ -6,7 +6,7 @@
  * 这里按同样造型重画成线性描边，使线条粗细与其余图标一致。
  */
 
-import type {ArrowStyleKey, ToolType} from "../types";
+import type {ArrowHead, ArrowKind, ArrowStyleKey, ArrowType, ToolType} from "../types";
 import {ARROW_PREVIEW, arrowPreview} from "./arrowGeometry";
 import {cornerPreviewRadius} from "./cornerRadius";
 
@@ -169,10 +169,11 @@ export const TOOL_ICONS: Record<ToolType, string> = {
  * 与画布上的真实绘制共用 arrowGeometry.ts 的同一套几何（含 ShareX 的头宽比例），
  * 视图固定 48×20、描边 1.6，图案永远不会和实际画出来的形状分叉。
  */
-export function arrowStyleIcon(style: ArrowStyleKey): string {
-    const p = arrowPreview(style);
+export function arrowStyleIcon(kind: ArrowKind | ArrowStyleKey): string {
+    const p = arrowPreview(kind);
     const parts: string[] = [];
-    if (p.shaft) parts.push(`<path d="${p.shaft}" fill="none"/>`);
+    // 尖尾的杆是实心楔形，要填色；其余样式的杆只是一根线
+    if (p.shaft) parts.push(`<path d="${p.shaft}" fill="${p.shaftFilled ? "currentColor" : "none"}"/>`);
     for (const head of p.heads) {
         parts.push(`<path d="${head.d}" fill="${head.fill ? "currentColor" : "none"}"/>`);
     }
@@ -210,15 +211,40 @@ export const CHEVRON_DOWN_ICON =
     `stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" ` +
     `aria-hidden="true"><path fill="none" d="M12 19 L24 31 L36 19"/></svg>`;
 
-/** 七种箭头各自的图案，键与 ArrowStyleKey 一致 */
-export const ARROW_STYLE_ICONS: Record<ArrowStyleKey, string> = {
-    classic: arrowStyleIcon("classic"),
-    modern: arrowStyleIcon("modern"),
-    double: arrowStyleIcon("double"),
-    basic: arrowStyleIcon("basic"),
-    line: arrowStyleIcon("line"),
-    bar: arrowStyleIcon("bar"),
-    barDouble: arrowStyleIcon("barDouble"),
+/**
+ * 箭头类型 / 端点样式的小图标：**手绘一套**，不走几何生成。
+ * 几何版在 16px 高的小格子里头会糊成一团、楔形也看不出来，
+ * 这里按参考图的比例直接把「箭头端的一小段」画出来，形状一眼可辨。
+ * viewBox 40×24，头占右边三分之二，杆只留一小截。
+ */
+const arrowGlyph = (body: string): string =>
+    `<svg class="annot-arrow-style-icon" viewBox="0 0 40 24" width="32" height="19" fill="none" ` +
+    `stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" ` +
+    `aria-hidden="true">${body}</svg>`;
+
+const GLYPH_TAIL = '<path d="M6 12H24"/>';
+
+export const ARROW_HEAD_ICONS: Record<ArrowHead, string> = {
+    none: arrowGlyph('<path d="M6 12H34"/>'),
+    // 杆要伸进三角内部，否则在 32px 的小格子里会看出「线头没接上」
+    basic: arrowGlyph(GLYPH_TAIL + '<path d="M35 12L19 4V20Z" fill="currentColor"/>'),
+    // 开口 V：线一直通到尖端，两条斜边只画到外面
+    open: arrowGlyph('<path d="M6 12H33"/><path d="M34 12L19 4M34 12L19 20"/>'),
+    // 燕尾的背边向内凹，杆要穿过凹口插到箭头肚子里
+    classic: arrowGlyph('<path d="M6 12H26"/><path d="M35 12L19 4Q26 12 19 20Z" fill="currentColor"/>'),
+    rhombus: arrowGlyph('<path d="M6 12H21"/><path d="M33 12L25 4L17 12L25 20Z" fill="currentColor"/>'),
+    circle: arrowGlyph('<path d="M6 12H21"/><circle cx="26" cy="12" r="7" fill="currentColor" stroke="none"/>'),
+};
+
+/**
+ * 类型下拉里的图案：**沿用旧版的整条长箭头**（与画布同一套几何），
+ * 四个类型各取一支最有代表性的组合。和右边样式格里的短图标是两套东西。
+ */
+export const ARROW_TYPE_ICONS: Record<ArrowType, string> = {
+    single: arrowStyleIcon({type: "single", head: "classic"}),
+    double: arrowStyleIcon({type: "double", head: "classic"}),
+    modern: arrowStyleIcon({type: "modern", head: "basic"}),
+    bar: arrowStyleIcon({type: "bar", head: "none"}),
 };
 
 /**

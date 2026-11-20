@@ -31,7 +31,8 @@ import {
     type StylePresets, type CurrentStyle, type LineDashKey,
 } from "./presets";
 import {
-    ARROW_STYLE_ICONS, CHEVRON_DOWN_ICON, CONTEXT_TOOLS, TOOL_ICONS, UNDO_ICON, REDO_ICON,
+    ARROW_TYPE_ICONS, ARROW_HEAD_ICONS,
+    CHEVRON_DOWN_ICON, CONTEXT_TOOLS, TOOL_ICONS, UNDO_ICON, REDO_ICON,
     SETTINGS_ICON, HELP_ICON, CANVAS_BUTTONS, CLOSE_ICON, cornerRadiusIcon,
     FULLSCREEN_ICON, RESTORE_ICON, ALIGN_ICON, ALIGN_ACTIONS,
 } from "./icons";
@@ -49,8 +50,12 @@ import {
 } from "./colorPresets";
 import {pickBadgeTextColor} from "./color";
 import {ColorWheel} from "./colorWheel";
-import {normalizeArrowStyle} from "./arrowStyles";
-import type {ArrowStyleKey} from "../types";
+import {
+    ARROW_HEADS, ARROW_TYPES, headEnabled, headAfterTypeChange, legacyOf,
+    legacyOfNumberHead, normalizeArrowHead, normalizeArrowStyle, normalizeArrowType, numberHeadOf,
+    resolveArrowKind,
+} from "./arrowStyles";
+import type {ArrowHead, ArrowKind, ArrowStyleKey, ArrowType} from "../types";
 import {fitTransform, computeZoomTransform} from "./viewport";
 import {
     applyMatrix, createCanvas, cropWindowOf, extendCanvas, flipCanvas,
@@ -149,22 +154,6 @@ function cropCursor(handle: CropHandle): string {
     }
 }
 export const THEME_STORAGE_KEY = "siyuan-plugin-annotate:theme";
-
-/**
- * 箭头样式下拉：ShareX 的五种 + 用户要求保留的两种竖线连接线。
- * 顺序即下拉里的顺序，「基础」放第一位（用户要求，最常用的实心三角）。
- * 注意这只影响显示顺序，默认样式仍然是「经典」（背弧更耐看），
- * 因此下拉展开时高亮的是「经典」而不是第一项。
- */
-const ARROW_STYLES: {key: ArrowStyleKey; label: string; hint: string}[] = [
-    {key: "basic", label: "基础", hint: "线加直底边实心三角（ShareX Basic）"},
-    {key: "classic", label: "经典", hint: "线加内凹背弧的实心箭头（ShareX Classic）"},
-    {key: "modern", label: "现代", hint: "粗杆与大翼一体成型的箭头（ShareX Modern）"},
-    {key: "double", label: "双头", hint: "两端都是经典箭头（ShareX Double）"},
-    {key: "line", label: "线条", hint: "线加空心的 V 形箭头（ShareX Line）"},
-    {key: "bar", label: "两端竖线", hint: "中间连接线与两端竖线相连"},
-    {key: "barDouble", label: "竖线双头", hint: "两端竖线加双向箭头"},
-];
 
 /** 高亮的两种画法：笔迹涂抹 / 拖出矩形色块（两个端共用一个入口） */
 const HIGHLIGHT_MODES: {key: "brush" | "rect"; label: string; hint: string}[] = [
@@ -584,7 +573,8 @@ export class AnnotEditor {
     /** 悬浮工具条的默认参数（没选中对象时也能先调，画出来就带这个值） */
     private contextDefaults = {blockSize: 16, blurRadius: 12, opacity: 100};
     /** 箭头样式下拉是否展开（展开时下拉列表画在按钮正下方） */
-    private arrowPickerOpen = false;
+    private arrowTypePickerOpen = false;
+    private arrowHeadPickerOpen = false;
 
     /** 矩形圆角下拉是否展开 */
     private cornerPickerOpen = false;
@@ -844,7 +834,7 @@ export class AnnotEditor {
                     <button type="button" class="annot-icon-button" data-action="redo" title="重做" aria-label="重做">${REDO_ICON}</button>
                 </div>
                 <span class="annot-mobile-top__spacer"></span>
-                <button type="button" class="annot-btn annot-btn--primary annot-mobile-top__done" data-action="save">完成</button>
+                <button type="button" class="annot-btn annot-btn--primary annot-mobile-top__done" data-action="save" title="保存：写回笔记里的这张图并关掉">${this.t("save", "保存")}</button>
             </div>
             ` : ""}
             <div class="annot-toolbar" role="toolbar" aria-label="通用属性">
@@ -1143,7 +1133,8 @@ export class AnnotEditor {
             const pathHas = (selector: string): boolean =>
                 path.some((node) => node instanceof Element && node.matches(selector));
             // 点在下拉外面先收起；不影响这次点击原本要做的事
-            if (this.arrowPickerOpen && !clicked?.closest?.(".annot-arrow-picker")) {
+            if ((this.arrowTypePickerOpen || this.arrowHeadPickerOpen) &&
+                !clicked?.closest?.(".annot-arrow-picker")) {
                 this.closeArrowPicker();
             }
             if (this.cornerPickerOpen && !clicked?.closest?.(".annot-corner-picker")) {
@@ -1357,7 +1348,7 @@ export class AnnotEditor {
             else if (action === "number-style-toggle") this.toggleNumberStylePicker();
             else if (action === "number-style-pick") {
                 this.numberStyleOpen = false;
-                this.setNumberArrowStyle(normalizeArrowStyle(button.getAttribute("data-value")));
+                this.setNumberArrowHead(normalizeArrowHead(button.getAttribute("data-value")));
             }
             else if (action === "line-round") {
                 const picked = this.getObject(this.selectedId);
@@ -1365,11 +1356,16 @@ export class AnnotEditor {
                     ? picked.style.lineRound !== false : this.current.lineRound;
                 this.setLineRound(!on);
             }
+            else if (action === "arrow-type-toggle") this.toggleArrowTypePicker();
             else if (action === "arrow-picker-toggle") this.toggleArrowPicker();
+            else if (action === "arrow-type-pick") {
+                // 先收起再改：改完要重画悬浮条，展开态会被一起重置
+                this.closeArrowPicker();
+                this.setArrowType(button.getAttribute("data-value") as ArrowType);
+            }
             else if (action === "arrow-style-pick") {
-                // 先收起再改样式：setArrowStyle 会重画悬浮条，展开态要一起被重置
-                this.arrowPickerOpen = false;
-                this.setArrowStyle(normalizeArrowStyle(button.getAttribute("data-value")));
+                this.closeArrowPicker();
+                this.setArrowHead(button.getAttribute("data-value") as ArrowHead);
             }
             else if (action === "corner-picker-toggle") this.toggleCornerPicker();
             else if (action === "corner-radius-pick") {
@@ -2209,7 +2205,7 @@ export class AnnotEditor {
         // 切工具时把裁切 / 扩展画布这些临时状态收掉，避免「还以为在画图，结果在拉裁切框」
         this.cancelCrop();
         this.toggleExtend(false);
-        this.arrowPickerOpen = false;
+        this.closeArrowPicker();
         this.cornerPickerOpen = false;
         this.numberFormatOpen = false;
         this.numberStyleOpen = false;
@@ -3415,7 +3411,7 @@ export class AnnotEditor {
             return;
         }
         // 箭头下拉展开时：Esc 只收下拉，不切工具、不关窗口
-        if (this.arrowPickerOpen && key === "escape") {
+        if ((this.arrowTypePickerOpen || this.arrowHeadPickerOpen) && key === "escape") {
             e.preventDefault();
             e.stopPropagation();
             this.closeArrowPicker();
@@ -4176,10 +4172,16 @@ export class AnnotEditor {
             });
         };
         switch (type) {
-            case "arrow":
-                items.push({key: "arrowStyle", label: "箭头", icon: ARROW_STYLE_ICONS[arrowKey], title: "箭头样式"});
+            case "arrow": {
+                // 一个按钮开一个气泡，里面上下两组：先类型、再端点样式
+                const kind = this.arrowKindOf(picked?.type === "arrow" ? picked.style : null);
+                items.push({
+                    key: "arrowStyle", label: "箭头", icon: ARROW_TYPE_ICONS[kind.type],
+                    title: "箭头类型与样式",
+                });
                 pushRound(arrowRound, "arrow");
                 break;
+            }
             case "line":
                 pushRound(lineRound, "line");
                 break;
@@ -4226,19 +4228,13 @@ export class AnnotEditor {
                     action: "number-color", value: "fillColor",
                     title: "气泡内部填充色",
                 };
-                // 端点 + 箭头样式：实心圆 / 空心圆 / 纯数字都靠它拉引线
+                // 端点三选一已取消：实心圆 / 空心圆 / 纯数字的引线末端直接用「样式」里那五种端点
                 const pushTip = (): void => {
                     items.push({
-                        key: "numberTip", label: "端点",
-                        icon: TB_TIP_ICONS[tip] ?? TB_TIP_ICONS.arrow,
-                        title: "引线端点",
+                        key: "numberArrowStyle", label: "样式",
+                        icon: ARROW_HEAD_ICONS[numberHeadOf(picked?.style ?? this.current)],
+                        title: "引线末端的箭头样式",
                     });
-                    if (tip === "arrow") {
-                        items.push({
-                            key: "arrowStyle", label: "样式",
-                            icon: ARROW_STYLE_ICONS[arrowKey], title: "引线箭头样式",
-                        });
-                    }
                 };
                 if (bubble === "pointer") {
                     // 定位气泡：端点那套不适用，换成引线 / 圆头 / 填充
@@ -4322,14 +4318,28 @@ export class AnnotEditor {
     /** 气泡里的选项：只留图案，不带文字（图案本身就能说明差异） */
     private mobilePopBody(key: string): string {
         const picked = this.getObject(this.selectedId);
-        const cell = (action: string, value: string, icon: string, on: boolean, title: string): string =>
-            `<button type="button" class="annot-mobile-pop__item${on ? " is-active" : ""}"
+        const cell = (action: string, value: string, icon: string, on: boolean, title: string,
+                      disabled = false): string =>
+            `<button type="button" class="annot-mobile-pop__item${on ? " is-active" : ""}${disabled ? " is-disabled" : ""}"
                 data-action="${action}" data-value="${value}" aria-pressed="${on}"
-                title="${title}" aria-label="${title}">${icon}</button>`;
+                title="${disabled ? `${title}（当前类型用不了）` : title}" aria-label="${title}"
+                ${disabled ? "disabled" : ""}>${icon}</button>`;
         if (key === "arrowStyle") {
-            const active = normalizeArrowStyle(picked?.style.arrowStyle ?? this.current.arrowStyle);
-            return ARROW_STYLES.map((item) => cell("arrow-style-pick", item.key,
-                ARROW_STYLE_ICONS[item.key], item.key === active, item.label)).join("");
+            // 上下两组：上面四个类型，中间一道细横线，下面是六个端点。
+            // 横线是 flex-basis:100% 的元素，自己就占满一行，两组不会挤在一起。
+            const kind = this.arrowKindOf(picked?.type === "arrow" ? picked.style : null);
+            const hr = `<span class="annot-mobile-pop__hr" aria-hidden="true"></span>`;
+            return ARROW_TYPES.map((item) => cell("arrow-type-pick", item.key,
+                    ARROW_TYPE_ICONS[item.key], item.key === kind.type, item.label)).join("") +
+                hr +
+                ARROW_HEADS.map((item) => cell("arrow-style-pick", item.key,
+                    ARROW_HEAD_ICONS[item.key], item.key === kind.head, item.label,
+                    !headEnabled(kind.type, item.key))).join("");
+        }
+        if (key === "numberArrowStyle") {
+            const active = numberHeadOf(picked?.style ?? this.current);
+            return ARROW_HEADS.filter((item) => item.key !== "none").map((item) => cell("number-style-pick", item.key,
+                ARROW_HEAD_ICONS[item.key], item.key === active, item.label)).join("");
         }
         if (key === "highlightMode") {
             const mode = this.current.highlightMode === "rect" ? "rect" : "brush";
@@ -4360,11 +4370,10 @@ export class AnnotEditor {
                 this.numberStyleIcon(item.key), item.key === active, item.label)).join("");
         }
         if (key === "numberTip") {
-            const active = normalizeNumberTip(picked?.type === "number"
-                ? picked.style.numberTip : this.current.numberTip);
-            return NUMBER_TIPS.map((item) => cell("number-tip", item.key,
-                TB_TIP_ICONS[item.key] ?? TB_TIP_ICONS.arrow,
-                item.key === active, item.label)).join("");
+            // 端点三选一已取消，这里直接给端点样式（与箭头工具同一套）
+            const active = numberHeadOf(picked?.type === "number" ? picked.style : this.current);
+            return ARROW_HEADS.filter((item) => item.key !== "none").map((item) => cell("number-style-pick", item.key,
+                ARROW_HEAD_ICONS[item.key], item.key === active, item.label)).join("");
         }
         if (key === "magnifierZoom") {
             const active = normalizeMagnifierZoom(picked?.type === "magnifier"
@@ -4469,6 +4478,13 @@ export class AnnotEditor {
     }
 
     /** 气泡水平居中于整条栏，尖角单独指回被点的那枚按钮 */
+    /**
+     * 把气泡摆到被点的那颗按钮下面，并让尖角正对着它。
+     *
+     * 原来只写 --tip-x、气泡靠 CSS 居中：气泡比按钮宽得多时（比如序号样式那四个大格子），
+     * 整块会偏到一边，尖角被挤到边缘，看着像「一个矩形外加一块小三角」而不是带尖角的气泡。
+     * 现在按按钮中心摆气泡、夹在容器里，尖角再兜个下限，永远长在气泡身上。
+     */
     private positionMobilePop(): void {
         const pop = this.root?.querySelector<HTMLElement>('[data-role="mobile-pop"]');
         const btn = this.root?.querySelector<HTMLElement>(".annot-mobile-topbar__btn.is-open");
@@ -4476,8 +4492,18 @@ export class AnnotEditor {
         const popBox = pop.getBoundingClientRect();
         const btnBox = btn.getBoundingClientRect();
         if (!popBox.width) return;
-        pop.style.setProperty("--tip-x",
-            `${Math.round(btnBox.left + btnBox.width / 2 - popBox.left)}px`);
+        const host = (pop.offsetParent as HTMLElement | null) ?? this.root;
+        if (!host) return;
+        const hostBox = host.getBoundingClientRect();
+        const center = btnBox.left + btnBox.width / 2 - hostBox.left;
+        const margin = 10;
+        let left = center - popBox.width / 2;
+        left = Math.max(margin, Math.min(left, hostBox.width - popBox.width - margin));
+        pop.style.left = `${Math.round(left)}px`;
+        pop.style.transform = "none";
+        // 气泡被夹到边上时尖角会顶出圆角，留 18px 兜住
+        const tip = Math.max(18, Math.min(popBox.width - 18, center - left));
+        pop.style.setProperty("--tip-x", `${Math.round(tip)}px`);
     }
 
     /** 多选时的上栏：已选数量 + 8 颗对齐 / 分布按钮（图标与 PC 同一套原稿） */
@@ -6146,8 +6172,6 @@ export class AnnotEditor {
             const format = normalizeNumberFormat(
                 numberObject ? (numberObject.geometry as NumberGeometry).format : this.current.numberFormat);
             const tip = normalizeNumberTip(numberObject ? numberObject.style.numberTip : this.current.numberTip);
-            const rounded = numberObject
-                ? numberObject.style.arrowRounded !== false : this.current.arrowRounded;
             // 气泡样式：实心圆 / 空心圆 / 定位气泡 / 纯数字，四枚只放缩略图，名字进 tooltip
             const bubble = numberObject
                 ? normalizeNumberBubble((numberObject.geometry as NumberGeometry).bubble)
@@ -6166,15 +6190,10 @@ export class AnnotEditor {
                         aria-pressed="${bubble === item.key}">${
                         this.numberStyleIcon(item.key)}</button>`).join("") +
                 `</div>`;
-            const roundChips = `<span class="annot-context__title">圆头</span>` +
-                `<div class="annot-context__chips" role="group" aria-label="尖头与引线端帽">` +
-                `<button type="button" class="annot-context__chip${roundOn ? " is-active" : ""}"
-                    data-action="number-round" data-value="on" aria-pressed="${roundOn}"
-                    title="尖头与引线末端是圆润的圆头">圆</button>` +
-                `<button type="button" class="annot-context__chip${roundOn ? "" : " is-active"}"
-                    data-action="number-round" data-value="off" aria-pressed="${!roundOn}"
-                    title="保持锐利的尖角与平口">尖</button>` +
-                `</div>`;
+            // 圆头不再是「圆 / 尖」二选一，改成和箭头一样的单按钮开关，摆在工具栏最末
+            const roundToggle = `<button type="button" class="annot-context__toggle${roundOn ? " is-active" : ""}"
+                data-action="number-round-toggle" aria-pressed="${roundOn}"
+                title="线端与折角是否圆润：开了是圆头，关掉是尖角平口">圆线</button>`;
             const leaderChips = `<span class="annot-context__title">引线</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="引线开关">` +
                 `<button type="button" class="annot-context__chip${leaderOn ? " is-active" : ""}"
@@ -6192,40 +6211,29 @@ export class AnnotEditor {
             const fillChips = `<span class="annot-context__title">填充</span>` +
                 swatch("fillColor", numberStyle?.fillColor ?? "#FFFFFF", "气泡内部填充色");
             const formatItem = NUMBER_FORMATS.find((item) => item.key === format) ?? NUMBER_FORMATS[0];
-            const style = normalizeArrowStyle(
-                numberObject ? numberObject.style.numberArrowStyle : this.current.numberArrowStyle);
-            const styleLabel = ARROW_STYLES.find((item) => item.key === style)?.label ?? "经典";
+            const numberHead = numberHeadOf(numberObject ? numberObject.style : this.current);
+            const styleLabel = ARROW_HEADS.find((item) => item.key === numberHead)?.label ?? "燕尾";
             // 端点 + 箭头样式 + 圆线：实心圆 / 空心圆 / 纯数字都复用它
+            // 旧版的「端点」三选一已经取消：菱形 / 圆形取代了方点和圆点，
+            // 现在直接给端点样式下拉（与箭头工具同一套五项）
             const tipBlock = `<span class="annot-context__title">端点</span>` +
-                `<div class="annot-context__chips" role="group" aria-label="引线端点">` +
-                NUMBER_TIPS.map((item) => `
-                    <button type="button" class="annot-context__chip${item.key === tip ? " is-active" : ""}"
-                        data-action="number-tip" data-value="${item.key}" title="${item.hint}"
-                        aria-pressed="${item.key === tip}">${item.label}</button>`).join("") +
-                `</div>` +
-                // 端点是箭头时，右边再给一个样式下拉（与箭头工具同一套七种，带图案）
-                (tip === "arrow"
-                    ? `<div class="annot-arrow-picker${this.numberStyleOpen ? " is-open" : ""}"
-                        data-role="number-style-picker">` +
-                        `<button type="button" class="annot-arrow-picker__button" data-action="number-style-toggle" ` +
-                        `aria-haspopup="listbox" aria-expanded="${this.numberStyleOpen}" title="引线箭头的样式">` +
-                        `<span class="annot-arrow-picker__label" data-role="number-style-label">${styleLabel}</span>` +
-                        `<span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_STYLE_ICONS[style]}</span>` +
-                        CHEVRON_DOWN_ICON +
-                        `</button>` +
-                        `<div class="annot-arrow-picker__menu" role="listbox" aria-label="箭头样式">` +
-                        ARROW_STYLES.map((item) => `
-                            <button type="button" class="annot-arrow-picker__item${item.key === style ? " is-active" : ""}"
-                                role="option" aria-selected="${item.key === style}"
-                                data-action="number-style-pick" data-value="${item.key}" title="${item.hint}">
-                                <span class="annot-arrow-picker__item-label">${item.label}</span>
-                                <span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_STYLE_ICONS[item.key]}</span>
-                            </button>`).join("") +
-                        `</div></div>` +
-                        `<button type="button" class="annot-context__toggle${rounded ? " is-active" : ""}"
-                            data-action="arrow-rounded" aria-pressed="${rounded}"
-                            title="线端与折角是否圆润：开了是圆线，关掉是方头尖角">圆线</button>`
-                    : "");
+                `<div class="annot-arrow-picker${this.numberStyleOpen ? " is-open" : ""}"
+                    data-role="number-style-picker">` +
+                `<button type="button" class="annot-arrow-picker__button" data-action="number-style-toggle" ` +
+                `aria-haspopup="listbox" aria-expanded="${this.numberStyleOpen}" title="引线箭头的端点样式">` +
+                `<span class="annot-arrow-picker__label" data-role="number-style-label">${styleLabel}</span>` +
+                `<span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_HEAD_ICONS[numberHead]}</span>` +
+                CHEVRON_DOWN_ICON +
+                `</button>` +
+                `<div class="annot-arrow-picker__menu" role="listbox" aria-label="箭头样式">` +
+                ARROW_HEADS.filter((item) => item.key !== "none").map((item) => `
+                    <button type="button" class="annot-arrow-picker__item${item.key === numberHead ? " is-active" : ""}"
+                        role="option" aria-selected="${item.key === numberHead}"
+                        data-action="number-style-pick" data-value="${item.key}" title="${item.hint}">
+                        <span class="annot-arrow-picker__item-label">${item.label}</span>
+                        <span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_HEAD_ICONS[item.key]}</span>
+                    </button>`).join("") +
+                `</div></div>`;
             html = `<span class="annot-context__title">序号</span>` +
                 // 编号格式：下拉框（按钮上写「名称 + 一个样子」）
                 `<div class="annot-arrow-picker annot-picker--text${this.numberFormatOpen ? " is-open" : ""}"
@@ -6248,35 +6256,49 @@ export class AnnotEditor {
                     </button>`).join("") +
                 `</div></div>` +
                 bubbleChips +
-                (bubble === "pointer" ? leaderChips + roundChips + fillChips
+                (bubble === "pointer" ? leaderChips + fillChips
                 : bubble === "hollow" ? fillChips + tipBlock
-                : tipBlock);
+                : tipBlock) +
+                roundToggle;
         } else if (type === "arrow") {
-            // 显示值必须和「改动目标」一致：选中的那支优先，没选中才显示默认样式
+            // 类型是一个下拉（带文字，看得清楚在选什么）；样式是横排图标，一下就能点中
             const picked = this.getObject(this.selectedId);
             const pickedStyle = picked?.type === "arrow" ? picked.style : null;
-            const active = normalizeArrowStyle(pickedStyle?.arrowStyle ?? this.current.arrowStyle);
+            const kind = this.arrowKindOf(pickedStyle);
             const rounded = pickedStyle ? pickedStyle.arrowRounded !== false : this.current.arrowRounded;
-            const activeLabel = ARROW_STYLES.find((item) => item.key === active)?.label ?? "经典";
-            // 参考 ShareX 的 ArrowStylePickerDropdown：按钮里「文字 + 图案 + 折角箭头」，
-            // 展开后每一项同样是「文字在左、图案在右」
-            html = `<span class="annot-context__title">箭头样式</span>` +
-                `<div class="annot-arrow-picker${this.arrowPickerOpen ? " is-open" : ""}" data-role="arrow-picker">` +
-                `<button type="button" class="annot-arrow-picker__button" data-action="arrow-picker-toggle" ` +
-                `aria-haspopup="listbox" aria-expanded="${this.arrowPickerOpen}" title="选择箭头样式">` +
-                `<span class="annot-arrow-picker__label">${activeLabel}</span>` +
-                `<span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_STYLE_ICONS[active]}</span>` +
+            const typeLabel = ARROW_TYPES.find((item) => item.key === kind.type)?.label ?? "单头";
+
+            const typePicker = `<div class="annot-arrow-picker${this.arrowTypePickerOpen ? " is-open" : ""}"
+                    data-role="arrow-type-picker">` +
+                `<button type="button" class="annot-arrow-picker__button" data-action="arrow-type-toggle" ` +
+                `aria-haspopup="listbox" aria-expanded="${this.arrowTypePickerOpen}" title="选择箭头类型">` +
+                `<span class="annot-arrow-picker__label">${typeLabel}</span>` +
+                `<span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_TYPE_ICONS[kind.type]}</span>` +
                 CHEVRON_DOWN_ICON +
                 `</button>` +
-                `<div class="annot-arrow-picker__menu" role="listbox" aria-label="箭头样式">` +
-                ARROW_STYLES.map((item) => `
-                    <button type="button" class="annot-arrow-picker__item${item.key === active ? " is-active" : ""}"
-                        role="option" aria-selected="${item.key === active}"
-                        data-action="arrow-style-pick" data-value="${item.key}" title="${item.hint}">
+                `<div class="annot-arrow-picker__menu" role="listbox" aria-label="箭头类型">` +
+                ARROW_TYPES.map((item) => `
+                    <button type="button" class="annot-arrow-picker__item${item.key === kind.type ? " is-active" : ""}"
+                        role="option" aria-selected="${item.key === kind.type}"
+                        data-action="arrow-type-pick" data-value="${item.key}" title="${item.hint}">
                         <span class="annot-arrow-picker__item-label">${item.label}</span>
-                        <span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_STYLE_ICONS[item.key]}</span>
+                        <span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_TYPE_ICONS[item.key]}</span>
                     </button>`).join("") +
-                `</div></div>` +
+                `</div></div>`;
+
+            const headChip = (item: {key: ArrowHead; label: string; hint: string}): string => {
+                const on = item.key === kind.head;
+                const enabled = headEnabled(kind.type, item.key);
+                return `<button type="button" class="annot-arrow-chip${on ? " is-active" : ""}${enabled ? "" : " is-disabled"}"
+                    data-action="arrow-style-pick" data-value="${item.key}"
+                    title="${enabled ? item.hint : `${item.label}（当前类型用不了）`}"
+                    aria-label="${item.label}" aria-pressed="${on}"
+                    ${enabled ? "" : "disabled"}>${ARROW_HEAD_ICONS[item.key]}</button>`;
+            };
+
+            html = `<span class="annot-context__title">类型</span>` + typePicker +
+                `<span class="annot-context__title">样式</span>` +
+                `<div class="annot-arrow-group" data-role="arrow-head-group">${ARROW_HEADS.map(headChip).join("")}</div>` +
                 `<button type="button" class="annot-context__toggle${rounded ? " is-active" : ""}"
                     data-action="arrow-rounded" aria-pressed="${rounded}"
                     title="线端与折角是否圆润：开了是圆线，关掉是方头尖角">圆线</button>`;
@@ -6334,16 +6356,33 @@ export class AnnotEditor {
     }
 
     /** 箭头样式下拉的展开 / 收起：只改状态与属性，不重画整块悬浮条 */
+    private toggleArrowTypePicker(force?: boolean): void {
+        this.arrowTypePickerOpen = force ?? !this.arrowTypePickerOpen;
+        if (this.arrowTypePickerOpen) this.arrowHeadPickerOpen = false;
+        this.syncArrowPickers();
+    }
+
     private toggleArrowPicker(force?: boolean): void {
-        this.arrowPickerOpen = force ?? !this.arrowPickerOpen;
-        const picker = this.root?.querySelector<HTMLElement>('[data-role="arrow-picker"]');
-        const button = picker?.querySelector<HTMLElement>('[data-action="arrow-picker-toggle"]');
-        picker?.classList.toggle("is-open", this.arrowPickerOpen);
-        button?.setAttribute("aria-expanded", String(this.arrowPickerOpen));
+        this.arrowHeadPickerOpen = force ?? !this.arrowHeadPickerOpen;
+        if (this.arrowHeadPickerOpen) this.arrowTypePickerOpen = false;
+        this.syncArrowPickers();
+    }
+
+    private syncArrowPickers(): void {
+        const sync = (role: string, action: string, open: boolean): void => {
+            const picker = this.root?.querySelector<HTMLElement>(`[data-role="${role}"]`);
+            picker?.classList.toggle("is-open", open);
+            picker?.querySelector<HTMLElement>(`[data-action="${action}"]`)
+                ?.setAttribute("aria-expanded", String(open));
+        };
+        sync("arrow-type-picker", "arrow-type-toggle", this.arrowTypePickerOpen);
+        sync("arrow-picker", "arrow-picker-toggle", this.arrowHeadPickerOpen);
     }
 
     private closeArrowPicker(): void {
-        if (this.arrowPickerOpen) this.toggleArrowPicker(false);
+        this.arrowTypePickerOpen = false;
+        this.arrowHeadPickerOpen = false;
+        this.syncArrowPickers();
     }
 
     /** 序号的「编号格式」下拉：展开 / 收起 */
@@ -6414,14 +6453,43 @@ export class AnnotEditor {
      * 切换箭头样式：与矩形圆角同一套逻辑——选中箭头就当场改它
      * （包括刚画完、还带着选中态的那一支），没选中就只改后续绘制的默认样式。
      */
+    /** 当前该显示的「类型 + 端点」：选中的那支优先，没选中就看默认 */
+    private arrowKindOf(style?: {arrowType?: ArrowType; arrowHead?: ArrowHead; arrowStyle?: ArrowStyleKey} | null): ArrowKind {
+        if (style) return resolveArrowKind(style);
+        const picked = this.getObject(this.selectedId);
+        if (picked?.type === "arrow") return resolveArrowKind(picked.style);
+        return resolveArrowKind(this.current);
+    }
+
+    /** 换类型：原来的端点若在新类型下不合法，自动落到该类型的默认值 */
+    private setArrowType(type: ArrowType): void {
+        const next = normalizeArrowType(type);
+        this.applyArrowKind(next, headAfterTypeChange(next, this.arrowKindOf().head));
+    }
+
+    /** 换端点样式：类型不动 */
+    private setArrowHead(head: ArrowHead): void {
+        this.applyArrowKind(this.arrowKindOf().type, normalizeArrowHead(head));
+    }
+
+    /** 旧接口（测试与历史调用）：按旧的扁平键一次设好类型 + 端点 */
     private setArrowStyle(style: ArrowStyleKey): void {
-        const key = normalizeArrowStyle(style);
-        if (!ARROW_STYLES.some((item) => item.key === key)) return;
-        this.current.arrowStyle = key;
+        const kind = resolveArrowKind({arrowStyle: normalizeArrowStyle(style)});
+        this.applyArrowKind(kind.type, kind.head);
+    }
+
+    private applyArrowKind(type: ArrowType, head: ArrowHead): void {
+        const legacy = legacyOf({type, head});
+        this.current.arrowType = type;
+        this.current.arrowHead = head;
+        this.current.arrowStyle = legacy;
         saveCurrentStyle(this.current);
         const object = this.getObject(this.selectedId);
         if (object?.type === "arrow") {
-            object.style.arrowStyle = key;
+            object.style.arrowType = type;
+            object.style.arrowHead = head;
+            // 同时写一份旧字段：降到旧版插件时还能认出来
+            object.style.arrowStyle = legacy;
             object.meta.updatedAt = Date.now();
             this.commit();
         }
@@ -6915,13 +6983,17 @@ export class AnnotEditor {
     }
 
     /** 序号引线用哪种箭头样式（单头 / 双头 / 线条……），与箭头工具同一套 */
-    private setNumberArrowStyle(style: ArrowStyleKey): void {
-        const key = normalizeArrowStyle(style);
-        this.current.numberArrowStyle = key;
+    /** 序号引线的箭头端点：与箭头工具的「样式」同一套（基础 / 燕尾 / 开放 / 菱形 / 圆形） */
+    private setNumberArrowHead(head: ArrowHead): void {
+        const key = normalizeArrowHead(head);
+        const legacy = legacyOfNumberHead(key);
+        this.current.numberArrowHead = key;
+        this.current.numberArrowStyle = legacy;
         saveCurrentStyle(this.current);
         const object = this.getObject(this.selectedId);
         if (object?.type === "number") {
-            object.style.numberArrowStyle = key;
+            object.style.numberArrowHead = key;
+            object.style.numberArrowStyle = legacy;
             object.meta.updatedAt = Date.now();
             this.commit();
         }

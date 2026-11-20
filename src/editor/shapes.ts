@@ -10,10 +10,12 @@
  * - 旋转通过 group 的 transform 施加，命中检测由浏览器自动跟随变换。
  */
 
+import type {ArrowHead} from "../types";
 import {
     svgEl, arrowBounds, midpoint, cloneArrow,
 } from "./geometry";
 import {arrowShape, arrowTipMiterInset, arrowShaftPath} from "./arrowGeometry";
+import {numberHeadOf, resolveArrowKind} from "./arrowStyles";
 import {formatNumber, numberTextScale} from "./numberFormat";
 import {normalizeNumberTip, type NumberTipKey} from "./numberTip";
 import {pickBadgeTextColor, readableInk, withAlpha} from "./color";
@@ -341,9 +343,8 @@ function highlightPath(points: Point[]): string {
  */
 function numberLeader(
     n: NumberGeometry,
-    tipStyle: NumberTipKey,
     rounded: boolean,
-    arrowStyle: ArrowStyleKey,
+    arrowHead: ArrowHead,
     color: string,
     lineWidth: number,
     /** 起点从圆心往外让出的距离：实心圆由圆盖住，空心圆 / 纯数字要让到圆外 */
@@ -364,44 +365,24 @@ function numberLeader(
         control: n.control ? {x: n.control.x, y: n.control.y} : null,
     };
     const out: SVGElement[] = [];
-    if (tipStyle === "arrow") {
-        const geometry: ArrowGeometry = {...lead};
-        // 用序号自己选的样式（单头 / 双头 / 线条等），与箭头工具同一套几何
-        const shape = arrowShape(geometry, arrowStyle, lineWidth);
-        if (shape.shaft) {
-            out.push(svgEl("path", {
-                d: shape.shaft, fill: "none", stroke: color, "stroke-width": lineWidth,
-                "stroke-linecap": linecap, "stroke-linejoin": linejoin,
-                "pointer-events": "none", class: "annot-shape",
-            }));
-        }
-        for (const head of shape.heads) {
-            out.push(svgEl("path", {
-                d: head.d, fill: head.fill ? color : "none", stroke: color,
-                "stroke-width": lineWidth, "stroke-miterlimit": 10,
-                "stroke-linecap": linecap, "stroke-linejoin": linejoin,
-                "pointer-events": "none", class: "annot-head",
-            }));
-        }
-        return out;
-    }
-    out.push(svgEl("path", {
-        d: arrowShaftPath(lead), fill: "none", stroke: color, "stroke-width": lineWidth,
-        "stroke-linecap": linecap, "stroke-linejoin": linejoin,
-        "pointer-events": "none", class: "annot-shape",
-    }));
-    // 圆点 / 方点跟箭头头部的横向尺寸对齐（半宽 2×线宽），
-    // 太小会看不见、太大又像贴了个圆片，这里取与箭头同样的量级
-    const size = Math.max(4, lineWidth * 2);
-    out.push(tipStyle === "square"
-        ? svgEl("rect", {
-            x: n.tip.x - size, y: n.tip.y - size, width: size * 2, height: size * 2,
-            fill: color, "pointer-events": "none", class: "annot-head",
-        })
-        : svgEl("circle", {
-            cx: n.tip.x, cy: n.tip.y, r: size,
-            fill: color, "pointer-events": "none", class: "annot-head",
+    // 引线固定单头，端点就是序号自己选的那个（菱形 / 圆形已取代旧的方点 / 圆点）
+    const shape = arrowShape({...lead}, {type: "single", head: arrowHead}, lineWidth);
+    if (shape.shaft) {
+        out.push(svgEl("path", {
+            d: shape.shaft, fill: shape.shaftFilled ? color : "none", stroke: color,
+            "stroke-width": lineWidth,
+            "stroke-linecap": linecap, "stroke-linejoin": linejoin,
+            "pointer-events": "none", class: "annot-shape",
         }));
+    }
+    for (const head of shape.heads) {
+        out.push(svgEl("path", {
+            d: head.d, fill: head.fill ? color : "none", stroke: color,
+            "stroke-width": lineWidth, "stroke-miterlimit": 10,
+            "stroke-linecap": linecap, "stroke-linejoin": linejoin,
+            "pointer-events": "none", class: "annot-head",
+        }));
+    }
     return out;
 }
 
@@ -490,14 +471,16 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
     switch (object.type) {
         case "arrow": {
             const a = object.geometry as ArrowGeometry;
-            const style = normalizeArrowStyle(object.style.arrowStyle);
+            // 新数据只有类型 + 端点，老数据只有旧的扁平键，统一在这里还原
+            const kind = resolveArrowKind(object.style);
             const rounded = object.style.arrowRounded !== false;
             const linecap = rounded ? "round" : "butt";
             const linejoin = rounded ? "round" : "miter";
-            // 关闭圆角时 miter 会在尖角外伸，竖线双头的尖头会戳出竖线，按溢出量内缩
-            const tipInset = rounded ? 0 : (style === "barDouble" ? arrowTipMiterInset(style, lineWidth) : 0);
+            // 关闭圆角时 miter 会在尖角外伸，两端竖线的尖头会戳出竖线，按溢出量内缩
+            const tipInset = rounded ? 0
+                : (kind.type === "bar" && kind.head !== "none" ? arrowTipMiterInset(kind.head, lineWidth) : 0);
             // 几何全部来自 arrowGeometry.ts（ShareX 的常量与路径），这里只负责上色
-            const shape = arrowShape(a, style, lineWidth, undefined, tipInset);
+            const shape = arrowShape(a, kind, lineWidth, undefined, tipInset);
             group.append(svgEl("path", {
                 "data-role": "hit", d: shape.shaft ?? shape.heads[0]?.d ?? "", fill: "none",
                 stroke: "transparent", "stroke-width": Math.max(18, lineWidth + 12) / zoom,
@@ -506,7 +489,9 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
             // 主干画到端点，由头部轮廓外扩半个线宽盖住线头（ShareX 同款 Path）
             if (shape.shaft) {
                 visuals.push(svgEl("path", {
-                    d: shape.shaft, fill: "none", stroke: color, "stroke-width": lineWidth,
+                    d: shape.shaft, fill: shape.shaftFilled ? color : "none", stroke: color,
+                    // 现代样式弯曲后是多边形，要填色；其余样式仍是单根描边
+                    "stroke-width": lineWidth,
                     "stroke-linecap": linecap, "stroke-linejoin": linejoin,
                     "pointer-events": "none", class: "annot-shape",
                 }));
@@ -640,8 +625,8 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
                 // 实心圆 / 空心圆 / 纯数字都支持引线：起点让出圆边，线不会横穿内部
                 const leaderInset = hollow ? n.radius : (isPlain ? n.radius * 0.8 : 0);
                 visuals.push(...numberLeader(
-                    n, normalizeNumberTip(object.style.numberTip), object.style.arrowRounded !== false,
-                    normalizeArrowStyle(object.style.numberArrowStyle), color, lineWidth, leaderInset));
+                    n, object.style.arrowRounded !== false,
+                    numberHeadOf(object.style), color, lineWidth, leaderInset));
                 if (hollow) {
                     // 空心圆：描边 + 实色填充（默认白，颜色只由取色器决定，没有透明档）
                     visuals.push(svgEl("circle", {
@@ -1136,12 +1121,16 @@ export function defaultStyle(type: AnnotType, current: CurrentStyle) {
         lineDash: current.lineDash,
         lineDashGap: current.lineDashGap,
         arrowStyle: current.arrowStyle,
+        // 类型 + 端点：渲染只看这两个，arrowStyle 只是给旧版插件留的备份
+        arrowType: current.arrowType,
+        arrowHead: current.arrowHead,
         arrowRounded: current.arrowRounded,
         // 线端圆润只对画线有意义（箭头的圆润由 arrowRounded 管）
         lineRound: type === "line" ? current.lineRound : undefined,
         // 序号引线末端：箭头 / 圆点 / 方点
         numberTip: type === "number" ? current.numberTip : undefined,
         // 序号引线箭头用哪种样式：默认跟随箭头工具当前选的
+        numberArrowHead: type === "number" ? current.numberArrowHead : undefined,
         numberArrowStyle: type === "number" ? current.numberArrowStyle : undefined,
         // 聚光灯的暗度 / 遮罩颜色跟着悬浮条最后一次调整
         spotlightOpacity: type === "spotlight" ? current.spotlightOpacity : undefined,

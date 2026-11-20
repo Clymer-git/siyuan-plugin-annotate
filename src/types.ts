@@ -1,6 +1,28 @@
-/** 箭头样式：ShareX 五种 + 用户要求保留的两种竖线连接线 */
+/**
+ * 箭头样式（旧模型，保留用于解析历史数据）。
+ * 1.3.0 起拆成「类型 + 端点样式」两个维度，见 ArrowType / ArrowHead。
+ */
 export type ArrowStyleKey =
     "classic" | "modern" | "double" | "basic" | "line" | "bar" | "barDouble";
+
+/**
+ * 箭头类型：控制整体的分布与形态。
+ * - single 单头：直杆 + 终点一个头
+ * - double 双头：直杆 + 两端各一个头
+ * - modern 尖尾：杆由尾部的尖楔张开到头部（尾细头粗）
+ * - bar    两端竖线：两端各一道竖线，可再加箭头
+ */
+export type ArrowType = "single" | "double" | "modern" | "bar";
+
+/** 端点图形：控制两端画成什么样子（「无」只给两端竖线用） */
+export type ArrowHead =
+    "basic" | "classic" | "open" | "rhombus" | "circle" | "none";
+
+/** 类型 + 端点样式，渲染时唯一需要的组合 */
+export interface ArrowKind {
+    type: ArrowType;
+    head: ArrowHead;
+}
 
 /** 选区识别得到的贴合形状：0..1 归一化水平条带（见 editor/smartSelect.ts） */
 import type {SmartRun} from "./editor/smartSelect";
@@ -199,15 +221,21 @@ export interface AnnotStyle {
     lineDash?: "solid" | "dashed" | "dotted" | "dashdot";
     /** 虚线的留空间距（画布像素，1~20）；缺省 6 */
     lineDashGap?: number;
-    /** 箭头样式（画布悬浮条里的下拉选择） */
+    /** 箭头样式（旧字段，1.3.0 之前的数据只有它；新数据仍写一份便于降级） */
     arrowStyle?: ArrowStyleKey;
+    /** 箭头类型：单头 / 双头 / 尖尾 / 两端竖线 */
+    arrowType?: ArrowType;
+    /** 端点图形：基础 / 燕尾 / 开放 / 菱形 / 圆形 / 无 */
+    arrowHead?: ArrowHead;
     /** 箭头端点与折角是否圆润；缺省视为开启 */
     arrowRounded?: boolean;
     /** 画线的线端是否圆润；缺省视为开启（圆头），关掉是方头 */
     lineRound?: boolean;
     /** 序号引线末端的样式：箭头 / 圆点 / 方点；缺省箭头 */
     numberTip?: "arrow" | "dot" | "square";
-    /** 序号引线末端为箭头时用哪种箭头样式（与箭头工具同一套七种）；缺省经典 */
+    /** 序号引线末端为箭头时用哪种端点（与箭头工具的样式同一套）；缺省燕尾 */
+    numberArrowHead?: ArrowHead;
+    /** 旧字段：1.3.0 之前存的是扁平样式键，仍写一份便于降级 */
     numberArrowStyle?: ArrowStyleKey;
     /** 定位气泡里的文字颜色；缺省跟随边框色（style.color） */
     numberTextColor?: string;

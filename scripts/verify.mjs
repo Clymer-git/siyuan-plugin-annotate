@@ -77,7 +77,7 @@ check("README.md 在包里且写了功能介绍",
         const md = (await read(name)).toString("utf8");
         // 标题允许「## 标注工具 / 功能 / 能做什么」，只要讲了功能与用法即可
         return md.includes("勾画阁·猫抓") && /## (标注工具|功能|能做什么)/.test(md) &&
-            /## (三步上手|怎么用|使用)/.test(md) && md.length > 600;
+            /## (两种打开方式|怎么用|使用|操作)/.test(md) && md.length > 600;
     })(), "README 需含名称、功能、用法");
 check("README 里引用了预览图", await (async () => {
     const name = Object.values(manifest.readme ?? {}).find((v) => typeof v === "string" && v.trim()) || "README.md";
@@ -432,10 +432,10 @@ check("两栏都能横向滑动，工具热区够手指点（54×56）",
     /\.annot-mobile-rail__scroll\s*\{[^}]*overflow-x:[ ]*auto/.test(css) &&
     /\.annot-mobile-tool\s*\{[^}]*width:[ ]*54px/.test(css) &&
     /\.annot-mobile-tool\s*\{[^}]*min-height:[ ]*56px/.test(css));
-check("移动端窗口整屏打开，顶部保存用短文案「完成」",
+check("移动端窗口整屏打开，顶部保存与 PC 用同一个文案「保存」",
     js.includes("annot-dialog-fullscreen") && js.includes("100vw") && js.includes("100vh") &&
     /\.b3-dialog\.annot-dialog-fullscreen\s*\{[^}]*padding:[ ]*0/.test(css) &&
-    js.includes('data-action="save">完成<'));
+    js.includes("annot-mobile-top__done") && !js.includes(">完成<"));
 check("移动端把「选择」做成左下圆钮、「对齐」做成右下圆钮（不再固定在下栏里）",
     js.includes("annot-mobile-fabs") && js.includes('data-action="mobile-select"') &&
     js.includes('class="annot-fab annot-fab--align"') &&
@@ -483,10 +483,10 @@ check("PC 绘图工具移到左侧竖栏，顶部只放通用属性（含线条�
 check("顶栏五个分组都带小标题（颜色 / 粗细 / 线型 / 填充 / 字号）",
     ["颜色", "粗细", "线型", "填充", "字号"].every((label) =>
         js.includes(`<span class="annot-group__label">${label}</span>`)));
-check("画布悬浮条按工具显示参数，箭头改成下拉选择 + 图案预览 + 圆角开关",
-    js.includes("renderContextBar") && js.includes("arrow-picker-toggle") &&
-    ["classic", "modern", "double", "basic", "line", "bar", "barDouble"].every((k) => js.includes(k)) &&
-    js.includes("annot-arrow-style-icon") && js.includes("ARROW_STYLE_ICONS") &&
+check("画布悬浮条按工具显示参数，箭头有类型下拉 + 端点图标 + 圆线开关",
+    js.includes("renderContextBar") && js.includes("arrow-type-toggle") && js.includes("arrow-picker-toggle") &&
+    ["rhombus", "classic", "basic", "open", "circle"].every((k) => js.includes(k)) &&
+    js.includes("annot-arrow-style-icon") && js.includes("ARROW_HEAD_ICONS") &&
     js.includes("arrow-rounded") && js.includes("setArrowRounded") &&
     css.includes(".annot-arrow-picker__button") && css.includes(".annot-context__toggle"));
 check("右侧面板分对象 / 层级 / 属性三区块，折叠与职责各归其位",
@@ -524,9 +524,26 @@ check("保留「两端竖线」与「竖线双头」，且中间连接线与竖�
     js.includes("barDouble") && js.includes("annot-bar") &&
     js.includes("function arrowShaftPath") && js.includes("function arrowBars") &&
     !js.includes("shrinkStart"));
-check("下拉按钮里同时有当前样式的文字与 SVG 图案，复制删除图标每个 path 都镂空",
-    js.includes("${ARROW_STYLE_ICONS[active]}") && js.includes("annot-arrow-picker__label") &&
-    js.includes("annot-arrow-picker__icon") &&
+const arrowIconSrc = await readFile(path.join(root, "src/editor/icons.ts"), "utf8");
+const editorSrcEarly = await readFile(path.join(root, "src/editor/AnnotEditor.ts"), "utf8");
+const shapesSrc = await readFile(path.join(root, "src/editor/shapes.ts"), "utf8");
+const shapesSrcEarly = shapesSrc;
+check("方点已并入菱形端点，不再单独画旋转方块",
+    !shapesSrcEarly.includes("const tipAngle") &&
+    shapesSrcEarly.includes("numberHeadOf"));
+
+check("类型下拉用整条长箭头（与画布同源），样式格用手绘短图标",
+    arrowIconSrc.includes("ARROW_TYPE_ICONS") &&
+    arrowIconSrc.includes('arrowStyleIcon({type: "single", head: "classic"})') &&
+    arrowIconSrc.includes('arrowStyleIcon({type: "modern", head: "basic"})') &&
+    // 样式格是另一套手绘短图，别和类型共用
+    arrowIconSrc.includes("const arrowGlyph") && arrowIconSrc.includes('viewBox="0 0 40 24"') &&
+    // 样式格的杆伸进头部内部（燕尾那条穿到 26）
+    arrowIconSrc.includes("M6 12H26") && arrowIconSrc.includes("M6 12H24") &&
+    !arrowIconSrc.includes("ARROW_TYPE_ICONS: Record<ArrowType, string> = {\n    single: arrowGlyph"));
+check("箭头工具每个格子都是纯图案 + 提示文字，复制删除图标每个 path 都镂空",
+    js.includes("ARROW_HEAD_ICONS[item.key]") && js.includes("ARROW_TYPE_ICONS[item.key]") &&
+    js.includes("annot-arrow-chip") &&
     js.includes('<path fill="none" d="M13 12.4316') && js.includes('<path fill="none" d="M29.6567'));
 
 // ---- v0.12.2：对象行末按钮 + 去掉「选中对象」行 + 层级栏目紧凑 ----
@@ -544,28 +561,36 @@ check("从对象行按钮上按下不会误触发拖拽排序",
     /addEventListener\("dragstart"[\s\S]{0,400}?"button"[\s\S]{0,80}?return/.test(js));
 
 // ---- v0.13.x：ShareX 箭头样式 + 自定义下拉 + 圆角开关 + 竖线无缝 ----
-check("七种箭头样式齐全：ShareX 的 Classic/Modern/Double/Basic/Line + 保留的两种竖线",
-    ["classic", "modern", "double", "basic", "line", "bar", "barDouble"].every((k) =>
-        js.includes(`option value="${k}"`) || js.includes(`key: "${k}"`)) &&
-    js.includes("ARROW_STYLE_KEYS") && js.includes("normalizeArrowStyle"));
-check("旧图里的 single / gradient / outline 会映射到新样式，不会画出空箭头",
-    js.includes("LEGACY_MAP") && js.includes('single: "classic"') &&
-    js.includes('gradient: "classic"') && js.includes('outline: "line"'));
-check("ShareX 经典箭头用内凹背弧，现代箭头用一体成型的粗杆大翼",
+check("箭头类型四种、端点五种齐全，旧扁平键仍能解析",
+    ["single", "double", "modern", "bar"].every((k) => js.includes(`"${k}"`)) &&
+    ["basic", "classic", "open", "rhombus", "circle"].every((k) => js.includes(`"${k}"`)) &&
+    js.includes("ARROW_STYLE_KEYS") && js.includes("normalizeArrowStyle") &&
+    js.includes("LEGACY_KINDS"));
+check("旧图里的 single / gradient / outline 会映射到新的类型+端点，不会画出空箭头",
+    js.includes("LEGACY_KINDS") &&
+    js.includes("gradient") && js.includes("outline") && js.includes("barDouble") &&
+    // 映射表里给的都是「类型 + 端点」的组合，而不是空对象
+    js.includes('head: "classic"') && js.includes('head: "open"'));
+check("燕尾用内凹背弧，尖尾用从尾部张开的楔形杆",
     js.includes("Q ${fmt(ctrl)}") && js.includes("Math.PI / 5.14") &&
-    js.includes("classicHead") && js.includes("modernSolid") && js.includes("shaftHalf"));
+    js.includes("classicHead") && js.includes("modernCurvedShaft") &&
+    js.includes("modernStraightShaft") && js.includes("MODERN_BASE_RATIO"));
 check("箭头头部轮廓按线宽描边，尖端不会露出一截线头（ShareX 同款 Path）",
     /class: "annot-head"/.test(js) && js.includes('"stroke-width": lineWidth') &&
-    !js.includes("lineWidth * 0.45"));
+    // 画布上的描边不能乘一个小于 1 的系数（热区那种放大是另一回事）
+    !/"stroke-width": lineWidth \* 0\./.test(js));
 check("关闭圆角时燕尾尖角不被截平：miter limit 取 ShareX 的 10（SVG 默认 4 会削成平头）",
     js.includes('"stroke-miterlimit": 10') && js.includes("stroke-linejoin"));
-check("竖线双头的头部按 miter 溢出量内缩，尖头不会戳出竖线",
-    js.includes("function arrowTipMiterInset") && js.includes("arrowTipMiterInset(style, lineWidth)") &&
-    js.includes("basicHead(g, size, true, false, tipInset)"));
-check("悬浮条下拉不再是原生 select，而是「文字 + 图案」的自定义列表",
+check("两端竖线加箭头时按 miter 溢出量内缩，尖头不会戳出竖线",
+    js.includes("function arrowTipMiterInset") &&
+    /kind\.type === "bar" && kind\.head !== "none"/.test(js) &&
+    js.includes("arrowTipMiterInset(kind.head, lineWidth)"));
+check("悬浮条是两个自定义下拉（类型 + 样式），不再是原生 select",
     !js.includes('data-action="arrow-style-select"') && !js.includes("annot-context__select") &&
-    js.includes('data-action="arrow-picker-toggle"') && js.includes('data-action="arrow-style-pick"') &&
-    js.includes("annot-arrow-picker__item-label"));
+    js.includes('"arrow-type-toggle"') && js.includes('"arrow-picker-toggle"') &&
+    js.includes('"arrow-type-pick"') && js.includes('"arrow-style-pick"') &&
+    js.includes("arrow-type-picker") && js.includes("annot-arrow-picker__item-label"))
+;
 check("下拉里的图案与画布上的箭头同源（同一套 arrowShape 几何）",
     js.includes("function arrowPreview") && js.includes("function arrowStyleIcon") &&
     !js.includes("const HEAD_R ="));
@@ -610,10 +635,14 @@ check("线性图标在插件作用域内统一兜底：默认 fill:none，只有
     /\.annot-root svg\.annot-icon \[fill="currentColor"\][^{]*\{[^}]*fill: currentColor/.test(css));
 
 // ---- v0.14.0：箭头样式排序 / 属性栏加档 / 点划线 / 画线圆线端 / 颜色预设 ----
-check("箭头样式「基础」排在下拉第一位（顺序即显示顺序）",
-    js.includes('key: "basic", label: "基础"') &&
-    js.indexOf('key: "basic", label: "基础"') < js.indexOf('key: "classic", label: "经典"'),
-    "basic 在 classic 之前");
+const arrowStylesSrc = await readFile(path.join(root, "src/editor/arrowStyles.ts"), "utf8");
+check("端点的显示顺序是 无 → 基础 → 燕尾 → 开放 → 菱形 → 圆形",
+    (() => {
+        const i = arrowStylesSrc.indexOf("export const ARROW_HEADS");
+        const block = arrowStylesSrc.slice(i, i + 300);
+        return ["HEAD_NONE", "HEAD_BASIC", "HEAD_CLASSIC", "HEAD_OPEN", "HEAD_RHOMBUS", "HEAD_CIRCLE"]
+            .every((name, idx, arr) => idx === 0 || block.indexOf(arr[idx - 1]) < block.indexOf(name));
+    })(), "顺序不对");
 check("默认箭头仍是「经典」（排序只影响显示，不改默认外观）",
     js.includes('arrowStyle: "classic"'));
 check("箭头悬浮条的圆润开关改叫「圆线」，与画线用同一个词",
@@ -703,22 +732,24 @@ const tipKeys = ((js.match(/NUMBER_TIPS = \[([\s\S]*?)\];/) || [])[1] || "")
 check("序号引线末端只有箭头 / 圆点 / 方点三种（没有双头与竖线）",
     tipKeys.join(",") === 'key: "arrow",key: "dot",key: "square"', tipKeys.join(","));
 check("序号引线箭头直接复用 arrowShape（与箭头工具同一套几何，不再自拼三角形）",
-    /function numberLeader\([\s\S]{0,700}?arrowShape\(geometry, arrowStyle, lineWidth\)/.test(js) &&
+    /arrowShape\(\{\.\.\.lead\}, \{type: "single", head: arrowHead\}, lineWidth\)/.test(shapesSrcEarly) &&
     !js.includes("function numberLeader(n: NumberGeometry, color: string, lineWidth: number)"));
 check("序号引线头部按线宽描边 + miterlimit 10（尖端不会露出线头）",
     /numberLeader[\s\S]{0,1600}?"stroke-miterlimit": 10/.test(js));
-check("序号圆点 / 方点的标记尺寸随线宽变，主干也走同一套 shaft 路径",
-    js.includes("const size = Math.max(4, lineWidth * 2)") && js.includes("arrowShaftPath(lead)"));
+check("序号引线的圆点 / 方点已并入端点样式，不再单独画标记",
+    !js.includes("const size = Math.max(4, lineWidth * 2)") &&
+    js.includes("numberHeadOf") && js.includes("rotation"));
 check("编号格式与端点都落在对象上（格式存 geometry，端点存 style），可持久化",
     js.includes("format = this.current.numberFormat") &&
     /numberTip: *type === "number" \? current\.numberTip/.test(js) &&
     js.includes("numberFormat: style.numberFormat") && js.includes("numberTip: style.numberTip"));
-check("序号悬浮条：编号格式是下拉框（5 项）、端点 3 项、仅箭头端点才有样式下拉与「圆线」",
+check("序号悬浮条：编号格式下拉 + 端点下拉常显 + 末尾的圆线开关，端点三选一已取消",
     js.includes('data-action="number-format-toggle"') &&
     js.includes('data-action="number-format-pick"') &&
-    js.includes('data-action="number-tip"') &&
     js.includes('data-action="number-style-toggle"') &&
-    /tip === "arrow"[\s\S]{0,900}?data-action="number-style-pick"[\s\S]{0,900}?data-action="arrow-rounded"/.test(js));
+    js.includes('data-action="number-style-pick"') &&
+    !js.includes('data-action="number-tip"') &&
+    js.includes('data-action="number-round-toggle"'));
 check("序号文字按格式显示，多字符时字号自动收小（不撑出圆点）",
     /formatNumber\(n\.number,/.test(js) && js.includes("numberTextScale(badgeText)"));
 check("序号也参与「圆线」开关与属性面板标签",
@@ -778,17 +809,17 @@ check("编号格式改成下拉框：按钮 + 5 个选项（data-action 成对�
 check("编号格式的五个选项各自带一个「样子」小标（1 / I / a / A / 一）",
     js.includes('chip: "1"') && js.includes('chip: "I"') && js.includes('chip: "a"') &&
     js.includes('chip: "A"') && js.includes('chip: "一"'));
-check("端点=箭头时右侧才生成箭头样式下拉（七项、每项带图案）",
+check("端点下拉一直显示（不再依赖「端点=箭头」），五项与箭头工具同源",
     js.includes('data-role="number-style-picker"') &&
-    js.includes('data-action="number-style-pick"') &&
-    /tip === "arrow"[\s\S]{0,1400}?ARROW_STYLE_ICONS\[item\.key\]/.test(js));
+    /const tipBlock = `<span class="annot-context__title">端点<\/span>` \+\s*`<div class="annot-arrow-picker/.test(editorSrcEarly) &&
+    /ARROW_HEAD_ICONS\[item\.key\]/.test(js));
 check("两个序号下拉互斥：打开一个会自动收起另一个",
     /toggleNumberFormatPicker\(force\)[\s\S]{0,220}?this\.numberStyleOpen = false/.test(js) &&
     /toggleNumberStylePicker\(force\)[\s\S]{0,220}?this\.numberFormatOpen = false/.test(js));
-check("序号引线用的箭头样式跟着对象走（style.numberArrowStyle，可持久化）",
-    js.includes("numberArrowStyle") &&
-    /setNumberArrowStyle\(style\)[\s\S]{0,520}?object\.style\.numberArrowStyle = key/.test(js) &&
-    /numberArrowStyle: type === "number" \? current\.numberArrowStyle/.test(js));
+check("序号引线的端点跟着对象走（numberArrowHead，同时写一份旧字段）",
+    js.includes("numberArrowHead") &&
+    /setNumberArrowHead\(head\)[\s\S]{0,700}?object\.style\.numberArrowHead = key/.test(js) &&
+    /object\.style\.numberArrowStyle = legacy/.test(js));
 check("全屏层级压过思源原生 UI：极值 z-index（2147483647）+ fixed + 四边贴 0",
     js.includes('const TOP_Z = "2147483647"') &&
     js.includes('setProperty("z-index", TOP_Z, "important")') &&
@@ -1050,6 +1081,8 @@ const srcFontsFile = await readFile(path.join(root, "src/editor/fonts.ts"), "utf
 const srcNumberIcon = await readFile(path.join(root, "src/editor/numberIcon.ts"), "utf8");
 const srcColorFile = await readFile(path.join(root, "src/editor/color.ts"), "utf8");
 const srcPersistence = await readFile(path.join(root, "src/editor/persistence.ts"), "utf8");
+const srcQuickEntry = await readFile(path.join(root, "src/quickEntry.ts"), "utf8");
+const srcIndexFile = await readFile(path.join(root, "src/index.ts"), "utf8");
 const srcSmartWorker = await readFile(path.join(root, "src/editor/smartWorker.ts"), "utf8");
 check("移动端两颗独立圆钮：左选择、右对齐，圆形、48px，无平移",
     js.includes("annot-mobile-fabs") && js.includes('"mobile-select"') &&
@@ -1111,7 +1144,7 @@ check("v0.22.1：两颗圆钮压到属性卡片上沿（不再为缩放胶囊抬
 
 check("v0.23.0：顶部悬浮栏按当前工具出按钮（箭头 / 画线 / 矩形 / 序号 / 放大镜 / 聚光灯）",
     srcEditor2.includes("private mobileTopItems") &&
-    /case "arrow":[\s\S]{0,220}?pushRound\(arrowRound, "arrow"\)/.test(srcEditor2) &&
+    /case "arrow":[\s\S]{0,460}?pushRound\(arrowRound, "arrow"\)/.test(srcEditor2) &&
     /case "line":[\s\S]{0,160}?pushRound\(lineRound, "line"\)/.test(srcEditor2) &&
     /case "rect":[\s\S]{0,340}?key: "corner"/.test(srcEditor2) &&
     /case "magnifier":[\s\S]{0,700}?key: "magnifierZoom"/.test(srcEditor2) &&
@@ -1122,8 +1155,8 @@ check("v0.23.0：「圆线」是纯开关，直接复用 PC 的 arrow-rounded / 
     srcEditor2.includes('item.action ?? "mobile-pop"'));
 
 check("v0.23.0：气泡格子只有图案、不带文字（信息只靠 SVG 或一个字符）",
-    /const cell = \(action: string, value: string, icon: string, on: boolean, title: string\)/.test(srcEditor2) &&
-    /title="\$\{title\}" aria-label="\$\{title\}">\$\{icon\}<\/button>/.test(srcEditor2));
+    /const cell = \(action: string, value: string, icon: string, on: boolean, title: string,/.test(srcEditor2) &&
+    /aria-label="\$\{title\}"[\s\S]{0,80}?>\$\{icon\}<\/button>/.test(srcEditor2));
 
 check("v0.23.0：气泡居中显示，尖角单独指回被点的那颗按钮",
     srcEditor2.includes("positionMobilePop") &&
@@ -1445,13 +1478,13 @@ check("v1.2.0-alpha.6：定位气泡＝完整圆 + 单独尖头，尖头颜色�
     srcShapes2.includes("dist > d + 2") &&
     srcTypes.includes('export type NumberBubble = "solid" | "hollow" | "pointer" | "plain"'));
 
-check("v1.2.0-alpha.10：定位气泡有引线 / 圆头 / 填充，边框与文字跟随主色",
+check("v1.2.0-alpha.10：定位气泡有引线 / 圆线开关 / 填充，边框与文字跟随主色",
     srcEditor2.includes('data-action="number-leader"') &&
-    srcEditor2.includes('data-action="number-round"') &&
+    srcEditor2.includes('data-action="number-round-toggle"') &&
     srcEditor2.includes('swatch("fillColor"') &&
     srcEditor2.includes('value: "fillColor"') &&
     !srcEditor2.includes('data-value="numberTextColor"') &&
-    /bubble === "pointer" \? leaderChips \+ roundChips \+ fillChips/.test(srcEditor2));
+    /bubble === "pointer" \? leaderChips \+ fillChips/.test(srcEditor2));
 
 check("v1.2.0-alpha.6：拖动预览就按当前样式画（不再是光秃秃的圆）",
     /bubble: this\.current\.numberBubble,[\s\S]{0,80}?leader: this\.current\.numberLeader,/.test(srcEditor2));
@@ -1517,7 +1550,7 @@ check("v1.2.0-alpha.13：空心圆与纯数字也能拉引线，起点让到圆�
     srcShapes2.includes("lineWidth, leaderInset)") &&
     srcEditor2.includes("const tipBlock =") &&
     /bubble === "hollow" \? fillChips \+ tipBlock/.test(srcEditor2) &&
-    /: tipBlock\);/.test(srcEditor2));
+    /: tipBlock\)\s*\+\s*roundToggle;/.test(srcEditor2));
 
 check("v1.2.0-alpha.13：空心圆内部固定实色，颜色只由取色器控制",
     /if \(hollow\) \{[\s\S]{0,400}?"fill-opacity": 1,/.test(srcShapes2) &&
@@ -1550,6 +1583,40 @@ check("v1.2.0-alpha.15：切样式不拿主色顶替填充色，圆心原地不�
     srcEditor2.includes("object.style.fillColor === object.style.color") &&
     /n\.tip = defaultPointerTip\(n\)/.test(srcEditor2) &&
     !/n\.center = /.test(srcEditor2));
+
+check("v1.3.0-alpha.2：图片快捷入口插在原生按钮组最左侧，双端共用",
+    srcIndexFile.includes('from "./quickEntry"') &&
+    srcIndexFile.includes("this.patchMenuIcon(host)") &&
+    // 菜单项和悬浮按钮共用同一份路径，不是各画一张
+    srcIndexFile.includes("svg.innerHTML = ICON_PATH") &&
+    srcQuickEntry.includes("export const ICON_PATH") &&
+    srcQuickEntry.includes("${ICON_PATH}") &&
+    srcIndexFile.includes("this.quickEntry?.stop()") &&
+    // 插进原生的 .protyle-icons（PC 悬停、移动端轻点都由思源显示这一组）
+    srcQuickEntry.includes('".protyle-icons"') &&
+    srcQuickEntry.includes("insertBefore(button, icons.firstElementChild)") &&
+    // 圆角接力：我们 --first，原来唯一的那个 --only 改成 --last
+    srcQuickEntry.includes("protyle-icon--first") &&
+    srcQuickEntry.includes("protyle-icon--last") &&
+    srcQuickEntry.includes("protyle-icon--only") &&
+    // 图标只用 currentColor，颜色不写死（1024 视图的两段实心路径）
+    !/fill="#[0-9a-fA-F]/.test(srcQuickEntry) &&
+    !/stroke="#[0-9a-fA-F]/.test(srcQuickEntry) &&
+    // 视图放大到图形的 75%（-171..1195），和思源 24 视图图标（内容 3..21）同比例
+    srcQuickEntry.includes('"-171 -171 1366 1366"') &&
+    srcIndexFile.includes("svg.setAttribute(\"viewBox\", ICON_VIEWBOX)") &&
+    (srcQuickEntry.match(/fill="currentColor"/g) || []).length >= 1 &&
+    // 盒子和原生一致 16px，视觉比例由 viewBox 内边距负责
+    /\.annot-quick-entry > svg \{[^}]*width: 16px[^}]*height: 16px/.test(css) &&
+    // 触屏热区 ≥44px（视觉仍是 24px，只扩伪元素）
+    css.includes(".annot-quick-entry::after") &&
+    /@media \(pointer: coarse\)[\s\S]{0,200}?\.annot-quick-entry::after/.test(css) &&
+    css.includes("inset: -10px"));
+
+check("v1.3.0-alpha.2：快捷入口点击直接开编辑器，不触发原生菜单",
+    srcQuickEntry.includes("event.stopPropagation()") &&
+    srcQuickEntry.includes("readImageTarget({element: container})") &&
+    srcIndexFile.includes("(target) => this.openEditor(target)"));
 
 check("v1.2.0-alpha.16：序号文字色的取色器真正生效",
     srcShapes2.includes("if (object.style.numberTextColor) ink = object.style.numberTextColor;") &&

@@ -1176,7 +1176,7 @@ check("真实浏览器（手机视口）：顶部按钮垂直居中对齐，保�
     (mobileChrome?.centers || []).length === 1 && mobileChrome?.overlap === false,
     `中心y=${JSON.stringify(mobileChrome?.centers)} 重叠=${mobileChrome?.overlap} 按钮=${JSON.stringify(mobileChrome?.buttons)}`);
 check("真实浏览器（手机视口）：顶部按钮文案是短「完成」，不会挤爆整行",
-    mobileChrome?.saveText === "完成", String(mobileChrome?.saveText));
+    mobileChrome?.saveText === "保存", String(mobileChrome?.saveText));
 check("真实浏览器（手机视口）：下栏图标没被思源全局样式填实（矩形仍是空心框）",
     mobileChrome?.iconFill === "none", `fill=${mobileChrome?.iconFill} stroke=${mobileChrome?.iconStroke}`);
 check("真实浏览器（手机视口）：两颗圆钮都是正圆 48px，当前模式那颗填充主色",
