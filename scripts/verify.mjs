@@ -1208,7 +1208,7 @@ check("1.4.0-alpha.70：端点控制点统一到文本档（0.52），界线控�
 check("1.4.0-alpha.69：图片快捷入口插入后整组重算圆角类（对齐思源 syncIcons）",
     /protyle-icon--first", "protyle-icon--last", "protyle-icon--only"/.test(srcQuickEntry || ""));
 
-check("1.4.0-alpha.71：载入底图后历史起点换成真实画布，0×0 占位帧不再回滚（首次撤销丢底图）",
+check("1.4.1：载入底图后历史起点换成真实画布，0×0 占位帧不再回滚（首次撤销丢底图）",
     /this\.scene\.canvas = canvas[\s\S]{0,400}?this\.history\.reset\(this\.snapshot\(\)\)/.test(srcEditor2) &&
     srcEditor2.includes("if (!(snapshot.canvas.width > 0 && snapshot.canvas.height > 0)) return false;"));
 
