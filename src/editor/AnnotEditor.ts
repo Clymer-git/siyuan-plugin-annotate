@@ -2066,6 +2066,10 @@ export class AnnotEditor {
             this.scene.canvas = canvas
                 ? {...canvas, matrix: {...canvas.matrix}}
                 : createCanvas(this.naturalWidth, this.naturalHeight);
+            // 撤销栈的第一帧必须换成「真正的画布」。构造函数压进去的是 0×0 占位帧，
+            // 普通图片（没有内嵌场景）又走不到 restoreScene() 里的 reset，
+            // 首个标注第一次撤销就会回滚到 0×0：底图、viewport 一起被写成 0px，原图消失。
+            this.history.reset(this.snapshot());
             this.mosaic.setBaseImage(img);
             this.blur.setBaseImage(img);
             this.magnifier.setBaseImage(img);
@@ -2401,6 +2405,9 @@ export class AnnotEditor {
 
     private restore(snapshot: EditorSnapshot | null): boolean {
         if (!snapshot) return false;
+        // 兜底：底图载入前压进来的 0×0 占位帧不能回滚，
+        // 否则 applyCanvas 会把底图尺寸写成 0，原图从画布上消失。
+        if (!(snapshot.canvas.width > 0 && snapshot.canvas.height > 0)) return false;
         this.ensureBaseImage();
         this.scene.objects = snapshot.objects;
         this.scene.canvas = snapshot.canvas;
