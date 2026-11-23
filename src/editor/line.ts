@@ -21,6 +21,17 @@ export function snapDirection(from: Point, to: Point): Point {
     return {x: from.x + length * Math.cos(angle), y: from.y + length * Math.sin(angle)};
 }
 
+/** 按任意角度步长吸附（尺寸标注用 15°，其它工具仍用 45° 的 snapDirection） */
+export function snapDirectionBy(from: Point, to: Point, stepDeg: number): Point {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-6) return {...from};
+    const step = (Math.PI * stepDeg) / 180;
+    const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+    return {x: from.x + length * Math.cos(angle), y: from.y + length * Math.sin(angle)};
+}
+
 /** 当前方向与最近的 45° 网格差多少度（0~22.5） */
 export function angleOffsetFromGrid(from: Point, to: Point): number {
     const dx = to.x - from.x;

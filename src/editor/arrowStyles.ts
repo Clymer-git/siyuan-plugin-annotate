@@ -47,7 +47,8 @@ export const ARROW_HEADS: ArrowOption<ArrowHead>[] = [
 
 /** 某个类型下这个端点能不能用 */
 export function headEnabled(type: ArrowType, head: ArrowHead): boolean {
-    if (type === "bar") return head === "none" || head === "basic" || head === "classic";
+    // 两端竖线也能配开放箭头（尺寸线常用这种「竖线 + V 头」的工程画法）
+    if (type === "bar") return head === "none" || head === "basic" || head === "classic" || head === "open";
     if (type === "modern") return head === "basic" || head === "classic";
     return head !== "none";
 }

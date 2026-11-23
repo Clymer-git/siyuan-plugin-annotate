@@ -405,8 +405,8 @@ check("画布内文字输入框完全透明（没有白底 / 边框 / 阴影 / �
     /\.annot-root textarea\.annot-text-editor\s*\{[^}]*border:\s*0\s*!important/.test(css) &&
     /\.annot-root textarea\.annot-text-editor\s*\{[^}]*box-shadow:\s*none\s*!important/.test(css) &&
     /\.annot-root textarea\.annot-text-editor\s*\{[^}]*padding:\s*0\s*!important/.test(css));
-check("编辑中的原文字先隐藏，避免与输入框叠成双影",
-    /\.annot-object\.is-editing\s*\{\s*visibility:\s*hidden/.test(css));
+check("编辑中的原文字先隐藏，避免与输入框叠成双影（底色块保留）",
+    css.includes(".annot-object.is-editing text.annot-shape"));
 check("输入文字不做反色，只让细框反色、光标按位置挑黑白",
     /\.annot-root \.annot-text-frame\s*\{[^}]*mix-blend-mode:[ ]*difference/.test(css) &&
     !/\.annot-root textarea\.annot-text-editor\s*\{[^}]*mix-blend-mode/.test(css) &&
@@ -731,6 +731,10 @@ const tipKeys = ((js.match(/NUMBER_TIPS = \[([\s\S]*?)\];/) || [])[1] || "")
     .match(/key: "([a-zA-Z]+)"/g) || [];
 check("序号引线末端只有箭头 / 圆点 / 方点三种（没有双头与竖线）",
     tipKeys.join(",") === 'key: "arrow",key: "dot",key: "square"', tipKeys.join(","));
+check("文本编辑态只隐藏画布上的字形，底色块不被整组隐藏",
+    css.includes(".annot-object.is-editing text.annot-shape") &&
+    !css.includes(".annot-object.is-editing {\n  visibility: hidden;\n}"));
+
 check("序号引线箭头直接复用 arrowShape（与箭头工具同一套几何，不再自拼三角形）",
     /arrowShape\(\{\.\.\.lead\}, \{type: "single", head: arrowHead\}, lineWidth\)/.test(shapesSrcEarly) &&
     !js.includes("function numberLeader(n: NumberGeometry, color: string, lineWidth: number)"));
@@ -1075,8 +1079,10 @@ check("多选状态下拖其中一个成员，整组一起挪（选择也不会�
 // ---------------------------------------------------------------- v0.22.0：移动端圆钮 + 停顿矫正
 const srcEditor2 = await readFile(path.join(root, "src/editor/AnnotEditor.ts"), "utf8");
 const srcShapes2 = await readFile(path.join(root, "src/editor/shapes.ts"), "utf8");
+const srcMeasure = await readFile(path.join(root, "src/editor/measure.ts"), "utf8");
 const srcSmart = await readFile(path.join(root, "src/editor/smartSelect.ts"), "utf8");
 const srcPresetsFile = await readFile(path.join(root, "src/editor/presets.ts"), "utf8");
+const srcStorage = await readFile(path.join(root, "src/storage.ts"), "utf8");
 const srcFontsFile = await readFile(path.join(root, "src/editor/fonts.ts"), "utf8");
 const srcNumberIcon = await readFile(path.join(root, "src/editor/numberIcon.ts"), "utf8");
 const srcColorFile = await readFile(path.join(root, "src/editor/color.ts"), "utf8");
@@ -1158,12 +1164,101 @@ check("v0.23.0：气泡格子只有图案、不带文字（信息只靠 SVG 或�
     /const cell = \(action: string, value: string, icon: string, on: boolean, title: string,/.test(srcEditor2) &&
     /aria-label="\$\{title\}"[\s\S]{0,80}?>\$\{icon\}<\/button>/.test(srcEditor2));
 
-check("v0.23.0：气泡居中显示，尖角单独指回被点的那颗按钮",
+check("1.4.0-alpha.55：界线开关在移动端会重建顶栏（按钮高亮才跟得上）",
+    /action === "measure-ticks"[\s\S]{0,400}?this\.renderMobileTopbar\(\)/.test(srcEditor2));
+
+check("1.4.0-alpha.78：配置走思源官方 saveData / loadData（petal 目录 data.json）",
+    srcIndexFile.includes('loadData("data")') && srcIndexFile.includes('saveData("data"') &&
+    srcStorage.includes("attachStorage") && srcStorage.includes("safeFlush") &&
+    srcPresetsFile.includes("readItem(STORAGE_KEY)") &&
+    !srcPresetsFile.includes("localStorage."));
+
+check("1.4.0-alpha.77：当前样式全量落盘（含节流）+ 顶栏重画时同步保存",
+    srcPresetsFile.includes("lastSaveAt") &&
+    srcPresetsFile.includes("measureUnit: style.measureUnit") &&
+    srcPresetsFile.includes("textMode: style.textMode") &&
+    srcPresetsFile.includes("numberBubble: style.numberBubble") &&
+    (() => {
+        const i = srcEditor2.indexOf('classList.toggle("is-cropping"');
+        if (i < 0) return false;
+        return srcEditor2.slice(i, i + 260).includes("saveCurrentStyle(this.current)");
+    })());
+
+check("1.4.0-alpha.76：尺寸标注 Shift 走 15° 吸附（落在 measure 分支）；渲染侧按当前单位拼文本",
+    srcEditor2.includes("snapDirectionBy(m.start, current, 15)") &&
+    !srcEditor2.includes("snapDirectionBy(from, current, 15)") &&
+    srcShapes2.includes("measureTextWithUnit(object.style.measureText") &&
+    srcMeasure.includes("UNIT_TOKENS"));
+
+check("1.4.0-alpha.72：撤销键兼容 e.code（Linux 布局）+ 打开时夺走正文焦点",
+    srcEditor2.includes('e.code === "KeyZ"') &&
+    srcEditor2.includes("isComposing") &&
+    srcEditor2.includes('active.closest?.(".protyle")') &&
+    srcEditor2.includes("active.blur()"));
+
+check("1.4.0-alpha.71：箭头与尺寸线的圆形端点手柄也用 dotSizes（与文本同档）",
+    (srcShapes2.match(/makeHandle\("(start|end)",[^)]*"circle", dotSizes\)/g) || []).length >= 4 &&
+    !/makeHandle\("(start|end)",[^)]*"circle", sizes\)/.test(srcShapes2));
+
+check("1.4.0-alpha.70：端点控制点统一到文本档（0.52），界线控制点贴回端点",
+    srcShapes2.includes("sizes.radius * 0.52") &&
+    srcShapes2.includes("const gap = 0;") &&
+    !srcShapes2.includes("0.67"));
+
+check("1.4.0-alpha.69：图片快捷入口插入后整组重算圆角类（对齐思源 syncIcons）",
+    /protyle-icon--first", "protyle-icon--last", "protyle-icon--only"/.test(srcQuickEntry || ""));
+
+check("1.4.0-alpha.68：撤销键分支内不再按焦点放行（对齐参考项目）",
+    (() => {
+        const i = srcEditor2.indexOf("if (mod && isUndoKey");
+        if (i < 0) return false;
+        const block = srcEditor2.slice(i, i + 430);
+        return !block.includes("isTyping");
+    })());
+
+check("1.4.0-alpha.67：撤销/重做后立即刷新按钮状态（空栈即置灰）",
+    /private undo\(\): void \{[\s\S]{0,400}?renderToolbar\(\)/.test(srcEditor2) &&
+    /private redo\(\): void \{[\s\S]{0,400}?renderToolbar\(\)/.test(srcEditor2));
+
+check("1.4.0-alpha.66：撤销键在 window 与 document 两层捕获都拦，且焦点锁在插件内",
+    /window\.addEventListener\("keydown"/.test(srcEditor2) &&
+    (srcEditor2.match(/addEventListener\("keydown"/g) || []).length >= 2 &&
+    srcEditor2.includes('tabindex", "-1"') &&
+    srcEditor2.includes("this.root.focus"));
+
+check("1.4.0-alpha.65：键盘监听挂在 window 捕获阶段（抢在宿主之前）",
+    /window\.addEventListener\("keydown"/.test(srcEditor2) &&
+    !/document\.addEventListener\("keydown", \(e\) => this\.onKeyDown/.test(srcEditor2));
+
+check("1.4.0-alpha.64：撤销键在 isTyping 之前就拦截（焦点在输入框也不漏给宿主）",
+    srcEditor2.indexOf("if (mod && isUndoKey") > 0 &&
+    srcEditor2.indexOf("if (mod && isUndoKey") <
+        srcEditor2.indexOf("if (this.isTyping(e.target)) return;") &&
+    srcEditor2.includes("ensureBaseImage"));
+
+check("1.4.0-alpha.63：序号半径预览与落库同源（唯一公式 numberRadiusFor）",
+    (srcEditor2.match(/numberRadiusFor\(/g) || []).length >= 3 &&
+    !/fontSize \* 0\.65/.test(srcEditor2) && !/fontSize \* 0\.8\b/.test(srcEditor2));
+
+check("1.4.0-alpha.61：尺寸数值底板不透明、上下留白 0.35 字号",
+    js.includes('fill: "#0B1220"') && !js.includes('withAlpha("#0B1220", 0.74)') &&
+    /fontSize \* 1\.7/.test(js.src || srcEditor2) === false && true);
+
+check("1.4.0-alpha.60：界线长度默认 0.9×字号（PC / 移动端同一常量），且不被旧缓存顶掉",
+    /TICK_LEN_RATIO\s*=\s*0\.9/.test(js) &&
+    !js.includes("measureTickUp: number(parsed") &&
+    !/measureTickUp: 10/.test(js) && !/measureTickUp:10/.test(js));
+
+check("v0.23.0 / 1.4.0-alpha.40：气泡挂在根容器下、按整屏居中定位，尖角指回被点的按钮",
     srcEditor2.includes("positionMobilePop") &&
     /pop\.style\.setProperty\("--tip-x"/.test(srcEditor2) &&
-    /\.annot-mobile-pop \{[\s\S]{0,240}?left: 50%/.test(css) &&
-    /\.annot-mobile-pop::before \{[\s\S]{0,240}?left: var\(--tip-x/.test(css) &&
-    /\.annot-mobile-pop \{[\s\S]{0,240}?transform: translateX\(-50%\)/.test(css));
+    // 气泡必须 append 到 root，不能塞进宽度=内容的顶部胶囊
+    /this\.root\.append\(pop\)/.test(srcEditor2) &&
+    // 居中交给 CSS：positionMobilePop 里不许再写 left（写了自己算一遍会偏）
+    !/private positionMobilePop\(\)[\s\S]{0,1600}?pop\.style\.left = /.test(srcEditor2) &&
+    // 居中靠「左右贴 0 + margin auto」，不依赖 transform（transform 会被某些 WebView 吃掉）
+    /\.annot-mobile-pop \{[\s\S]{0,400}?left: 0[\s\S]{0,200}?margin-left: auto/.test(css) &&
+    /\.annot-mobile-pop::before \{[\s\S]{0,240}?left: var\(--tip-x/.test(css));
 
 check("v0.23.0：点选项收起、点栏外收起、换工具不留孤儿气泡",
     /clicked\?\.closest\?\.\("\.annot-mobile-pop__item"\)/.test(srcEditor2) &&
@@ -1236,8 +1331,8 @@ check("v0.26.7：移动/旋转/编辑换成 1024 图标 + 白圆底（currentCol
     srcShapes2.includes('makeHandle("move", moveAt, zoom, "move", buttonSizes)') &&
     srcShapes2.includes('}, zoom, "edit", buttonSizes)'));
 
-check("v0.26.7：四角/四边收小一圈，命中半径不减（热区单独更大）",
-    /const dotSizes: HandleSizes = \{[\s\S]{0,160}?radius: sizes\.radius \* \(object\.type === "text" \? 0\.52 : 0\.67\)/.test(srcShapes2) &&
+check("v0.26.7 / 1.4.0-alpha.70：四角/四边统一收小到 0.52，命中半径不减（热区单独更大）",
+    /const dotSizes: HandleSizes = \{[\s\S]{0,160}?radius: sizes\.radius \* 0\.52/.test(srcShapes2) &&
     /const buttonSizes: HandleSizes = \{[\s\S]{0,160}?radius: sizes\.radius \* 1\.22,[\s\S]{0,80}?hitRadius: sizes\.hitRadius \+ 4/.test(srcShapes2) &&
     // 命中圆永远画在可见图形之前，且半径更大
     srcShapes2.includes('class: "annot-handle"') &&
@@ -1636,9 +1731,18 @@ check("v1.2.0-alpha.19：同类对象内起手改为选中，不再叠一个",
     // 文字工具也要让路，否则会直接新建一个文字对象
     srcEditor2.includes('this.activeTool === "text" && !adjustExisting'));
 
+check("1.4.0-alpha.35：全屏容器不认 dvh（键盘不能压缩整屏）",
+    // 红线：容器只认 100vh + overflow hidden，否则冷启动第一次键盘弹起会把底部栏顶上去
+    css.includes("height: 100vh !important") &&
+    !css.includes("height: 100dvh !important") &&
+    css.includes("overflow: hidden !important"));
+
+check("1.4.0-alpha.35：移动端尺寸控件排在参数栏末尾（不打乱箭头工具的排布）",
+    /尺寸标注：排在最后[\s\S]{0,120}parts\.push\(this\.buildMobileMeasureGroup\(\)\)/.test(srcEditor2));
+
 check("v1.2.0-alpha.22：键盘态只锁高度，不再隐藏底部三栏",
-    // 锁高度：避免 dvh 随键盘缩、工具条被顶到键盘上方
-    css.includes("height: var(--annot-lock-h, 100dvh)") &&
+    // 锁高度：只认 100vh（dvh 会跟随键盘缩短，把工具条顶到键盘上方）
+    css.includes("height: var(--annot-lock-h, 100vh)") &&
     // 三栏一条都不能在键盘态里被 display:none
     !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-rail") &&
     !css.includes(".annot-root--mobile.is-keyboard .annot-mobile-fabs") &&

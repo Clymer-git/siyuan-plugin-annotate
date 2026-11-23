@@ -423,8 +423,8 @@ if (process.argv[3] === "--m3") {
     };
 
     // 1) 布局与初始态
-    check("M3 左侧竖栏有 11 个绘图工具（选择已移入悬浮条）、顶部栏不再放工具按钮",
-        win.document.querySelectorAll(".annot-imagebar [data-tool]").length === 11 &&
+    check("M3 左侧竖栏有 12 个绘图工具（选择已移入悬浮条）、顶部栏不再放工具按钮",
+        win.document.querySelectorAll(".annot-imagebar [data-tool]").length === 12 &&
         win.document.querySelectorAll(".annot-toolbar [data-tool]").length === 0,
         `左侧=${win.document.querySelectorAll(".annot-imagebar [data-tool]").length} 顶部=${win.document.querySelectorAll(".annot-toolbar [data-tool]").length}`);
     check("M3 侧边栏存在", !!q('[data-role="sidebar"]'));
@@ -969,8 +969,8 @@ if (process.argv[3] === "--m3") {
         !!q('.annot-toolbar [data-role="group-fills"]') &&
         !!q('.annot-toolbar [data-role="group-fonts"]') &&
         win.document.querySelectorAll('.annot-toolbar button[data-tool]').length === 0);
-    check("PC 左侧竖栏分上下两组：11 个绘图工具 + 6 个图像操作（选择不在竖栏里）",
-        win.document.querySelectorAll('.annot-imagebar [data-role="tool-buttons"] button[data-tool]').length === 11 &&
+    check("PC 左侧竖栏分上下两组：12 个绘图工具 + 6 个图像操作（选择不在竖栏里）",
+        win.document.querySelectorAll('.annot-imagebar [data-role="tool-buttons"] button[data-tool]').length === 12 &&
         win.document.querySelectorAll('.annot-imagebar [data-canvas-op]').length === 6 &&
         !!q('.annot-imagebar__sep'));
     check("右侧面板只剩对象 / 层级两个区块（属性栏目已移除）",
@@ -1072,9 +1072,9 @@ if (process.argv[3] === "--m3") {
             headChips().map((el) => `${el.getAttribute("data-value")}${el.disabled ? "(灰)" : ""}`).join(","));
         pickType("bar");
         const disabledBar = (key) => !!headGroup()?.querySelector(`.annot-arrow-chip[data-value="${key}"]:disabled`);
-        check("两端竖线下放开「无箭头」，开放/菱形/圆形仍置灰",
+        check("两端竖线下开放箭头也可用，菱形与圆形仍置灰",
             !disabledBar("none") && !disabledBar("basic") && !disabledBar("classic") &&
-            disabledBar("open") && disabledBar("rhombus") && disabledBar("circle"));
+            !disabledBar("open") && disabledBar("rhombus") && disabledBar("circle"));
         // 还原成双头：后面的绘制用例依赖它
         pickType("double");
         pickHead("classic");
@@ -2009,7 +2009,7 @@ if (process.argv[3] === "--m5") {
     click('[data-action="tools-menu"]');
     check("M5 点击工具按钮展开下拉", q('[data-role="tool-menu"]')?.hidden === false);
     check("M5 下拉里仍有全部绘图工具（11 个，选择在悬浮条上）",
-        q('[data-role="tool-menu"]')?.querySelectorAll("button[data-tool]").length === 11);
+        q('[data-role="tool-menu"]')?.querySelectorAll("button[data-tool]").length === 12);
     win.__rootWidth = 1000;
     win.dispatchEvent(new win.Event("resize"));
     check("M5 窗口变宽后恢复完整工具栏", !root()?.classList.contains("is-compact"));
@@ -2336,8 +2336,8 @@ if (process.argv[3] === "--ui") {
     check("UI 工具按钮全部为图标",
         q('[data-role="tool-buttons"] button[data-tool] svg') !== null &&
         q('[data-role="tool-buttons"] button[data-tool]')?.textContent.trim() === "");
-    check("UI 左侧工具共 11 个（选择已移到悬浮条）",
-        q('[data-role="tool-buttons"]')?.querySelectorAll("button[data-tool]").length === 11);
+    check("UI 左侧工具共 12 个（选择已移到悬浮条）",
+        q('[data-role="tool-buttons"]')?.querySelectorAll("button[data-tool]").length === 12);
     check("UI 左侧竖栏不再有「选择」按钮",
         !q('[data-role="tool-buttons"] button[data-tool="select"]'));
     {
@@ -2378,7 +2378,7 @@ if (process.argv[3] === "--ui") {
     const extendSourceIcon = onePath1024.find((el) =>
         (el.querySelector("path")?.getAttribute("d") || "").startsWith("M320 864v96"));
     check("UI 模糊 / 画线 / 全屏 / 聚光灯 / 扩展画布图标都用用户给的原稿（实心、不改视图）",
-        sourceIcons.length === 5 && !!blurSourceIcon && !!lineSourceIcon &&
+        sourceIcons.length === 6 && !!blurSourceIcon && !!lineSourceIcon &&
         !!fullscreenSourceIcon && !!spotlightSourceIcon && !!extendSourceIcon &&
         [blurSourceIcon, lineSourceIcon, spotlightSourceIcon, extendSourceIcon].every((el) =>
             el.querySelector("path")?.getAttribute("fill") === "currentColor" &&
@@ -3804,6 +3804,7 @@ if (process.argv[3] === "--m6") {
     const fire = (el, type) => el?.dispatchEvent(new win.Event(type, {bubbles: true, cancelable: true}));
     const settleM6 = () => new Promise((resolve) => setTimeout(resolve, 30));
     let svg = null;
+
     const open = () => {
         const d = makeDetail();
         listeners.get("open-menu-image")?.({detail: d.detail});
@@ -4729,6 +4730,52 @@ if (process.argv[3] === "--m7") {
 }
 
 // ---------------------------------------------------------------- v0.10.0 移动端：顶部导航 + 上下双栏 + 触摸手势
+// ---------------------------------------------------------------- Mac 撤销不吃底图（1.4.0-alpha.62）
+if (process.argv[3] === "--macundo") {
+    Object.defineProperty(globalThis, "localStorage", {value: win.localStorage, configurable: true});
+    const q = (s) => win.document.querySelector(s);
+    const click = (s) => q(s)?.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+    const d = makeDetail();
+    listeners.get("open-menu-image")?.({detail: d.detail});
+    d.getItem()?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const baseEl = () => q(".annot-base");
+    const srcBefore = baseEl()?.getAttribute("src") || "";
+    check("1.4.0-alpha.62 打开编辑器后底图存在", !!baseEl() && !!srcBefore, srcBefore.slice(0, 30));
+    check("1.4.0-alpha.67 刚打开时撤销按钮是禁用状态",
+        q('[data-action="undo"]')?.disabled === true, String(q('[data-action="undo"]')?.disabled));
+    const objects = () => win.document.querySelectorAll("g.annot-object").length;
+    click('button[data-tool="rect"]');
+    const svgEl = q('[data-role="svg"]');
+    const toClient = (x, y) => {
+        const layer = q('[data-role="transform"]');
+        const r = layer?.getBoundingClientRect?.() ?? {left: 0, top: 0};
+        return {clientX: r.left + x, clientY: r.top + y};
+    };
+    const a = toClient(200, 200); const b = toClient(360, 320);
+    svgEl?.dispatchEvent(new win.MouseEvent("pointerdown", {bubbles: true, cancelable: true, button: 0, ...a}));
+    svgEl?.dispatchEvent(new win.MouseEvent("pointermove", {bubbles: true, cancelable: true, button: 0,
+        clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2}));
+    svgEl?.dispatchEvent(new win.MouseEvent("pointerup", {bubbles: true, cancelable: true, button: 0, ...b}));
+    const afterDraw = objects();
+    const cmdZ = new win.KeyboardEvent("keydown", {key: "z", metaKey: true, bubbles: true, cancelable: true});
+    win.document.body.dispatchEvent(cmdZ);
+    check("1.4.0-alpha.62 Mac 的 Command+Z 被插件吃掉（defaultPrevented）", cmdZ.defaultPrevented === true);
+    check("1.4.0-alpha.67 撤销到底后按钮立刻变灰",
+        q('[data-action="undo"]')?.disabled === true, String(q('[data-action="undo"]')?.disabled));
+    // 空栈时再按一次：图必须还在
+    const emptyZ = new win.KeyboardEvent("keydown", {key: "z", metaKey: true, bubbles: true, cancelable: true});
+    win.document.body.dispatchEvent(emptyZ);
+    check("1.4.0-alpha.67 空栈再按撤销：事件被吃掉且底图仍在",
+        emptyZ.defaultPrevented === true &&
+        !!baseEl() && (baseEl()?.getAttribute("src") || "") === srcBefore);
+    check("1.4.0-alpha.62 撤销后底图仍在且地址不变",
+        !!baseEl() && (baseEl()?.getAttribute("src") || "") === srcBefore,
+        `对象 ${afterDraw} -> ${objects()}`);
+    click('[data-action="close"]');
+    await new Promise((r) => setTimeout(r, 60));
+}
+
 if (process.argv[3] === "--m8") {
     Object.defineProperty(globalThis, "localStorage", {value: win.localStorage, configurable: true});
     // 窄屏 + 触摸：让编辑器按移动端布局构建
@@ -4810,8 +4857,8 @@ if (process.argv[3] === "--m8") {
         !q(".annot-mobile-top__title"));
     const railTools = all(".annot-mobile-rail button[data-tool]");
     const railOps = all(".annot-mobile-rail button[data-canvas-op]");
-    check("M8 下栏含 11 个绘图工具与 6 个图像操作（选择已独立成圆钮）",
-        railTools.length === 11 && railOps.length === 6 &&
+    check("M8 下栏含 12 个绘图工具与 6 个图像操作（选择已独立成圆钮）",
+        railTools.length === 12 && railOps.length === 6 &&
         !railTools.some((b) => b.getAttribute("data-tool") === "select"),
         `工具 ${railTools.length} / 图像 ${railOps.length}`);
     check("M8 下栏每个按钮都有文字标签（不靠猜图标）",
@@ -4833,8 +4880,8 @@ if (process.argv[3] === "--m8") {
         const solid = !!el.querySelector('[fill="currentColor"]');
         return !linear && !solid;
     }).map((el) => el.getAttribute("class") || "no-class");
-    check("M8 下栏图标带 annot-icon 类且不会被思源全局样式填实（17 个）",
-        iconNodes.length === 17 && badIcons.length === 0 &&
+    check("M8 下栏图标带 annot-icon 类且不会被思源全局样式填实（18 个）",
+        iconNodes.length === 18 && badIcons.length === 0 &&
         !!q('[data-action="mobile-select"] svg.annot-icon'),
         `${iconNodes.length} 个，异常 ${badIcons.join(" / ")}`);
     check("M8 顶部保存按钮用短文案「完成」",
@@ -4866,8 +4913,8 @@ if (process.argv[3] === "--m8") {
     click('.annot-mobile-rail button[data-tool="text"]');
     check("M8 切到文字工具后，第二行只留颜色 + 字号（字体已搬去顶栏）",
         styleGroups().join(",") === "colors,fonts" &&
-        styleText().includes("字号") && !styleText().includes("字体") && !styleText().includes("粗细"),
-        `${styleGroups().join(",")} / ${styleText().slice(0, 30)}`);
+        styleText().includes("字号") && !styleText().includes("粗细"),
+        `${styleGroups().join(",")} / ${styleText().slice(0, 24)}`);
     {
         const t1 = q('[data-role="mobile-topbar"] button[data-action="font-pop"]');
         check("M8 文字工具的字体入口在顶部悬浮栏", !!t1, t1 ? t1.textContent.trim() : "没找到");
@@ -5067,8 +5114,8 @@ if (process.argv[3] === "--m8") {
         const endCircles = all('[data-role="handles"] g[data-handle="end"] circle');
         const hitRadius = Number(endCircles[0]?.getAttribute("r") || 0) * zoom;
         const dotRadius = Number(endCircles[1]?.getAttribute("r") || 0) * zoom;
-        check("M8 移动端手柄：视觉 8px 半径（比电脑小一档），命中半径 23px（直径 46，好点）",
-            Math.abs(hitRadius - 23) < 0.8 && Math.abs(dotRadius - 8) < 0.8,
+        check("M8 移动端手柄：视觉 4.2px 半径（与文本档一致），命中半径 23px（直径 46，好点）",
+            Math.abs(hitRadius - 23) < 0.8 && Math.abs(dotRadius - 4.2) < 0.8,
             `命中 ${hitRadius.toFixed(1)}px / 圆点 ${dotRadius.toFixed(1)}px`);
     }
 
@@ -5796,6 +5843,104 @@ if (process.argv[3] === "--m8") {
             svg.dispatchEvent(touch("pointerup", 340, 400, 92));
             await tick();
         }
+    }
+
+    // 文本工具：描边/背景换图标、颜色只剩白黑（1.4.0-alpha.44）
+    {
+        click('.annot-mobile-rail button[data-tool="text"]');
+        await tick();
+        const modeBtn = Array.from(q('[data-role="mobile-topbar"]')?.querySelectorAll(".annot-mobile-topbar__btn") ?? [])
+            .find((b) => (b.getAttribute("data-action") || "") === "text-mode-toggle");
+        check("1.4.0-alpha.44 描边/背景按钮用图标（不再是单个汉字）",
+            !!modeBtn?.querySelector("svg.annot-icon") && !modeBtn?.querySelector(".annot-mobile-topbar__char"),
+            modeBtn?.querySelector("svg") ? "有图标" : "仍是汉字");
+        const swatches = Array.from(win.document.querySelectorAll('[data-group="colors"] .annot-mobile-swatch'))
+            .filter((el) => el.getAttribute("data-preset") === "color");
+        check("1.4.0-alpha.46 底部通用颜色栏保持原样（5 色 + 自定义）",
+            swatches.length >= 5, String(swatches.length));
+        // 顶部那两颗：粗细（WIDTH_ICON）与字体（FONT_ICON）都必须是图标
+        const topBtns = Array.from(q('[data-role="mobile-topbar"]')?.querySelectorAll(".annot-mobile-topbar__btn") ?? []);
+        check("1.4.0-alpha.45 顶部粗细与字体按钮都用图标",
+            topBtns.length >= 4 && topBtns.every((b) => !!b.querySelector("svg.annot-icon") ||
+                !!b.querySelector(".annot-mobile-topbar__dot")),
+            `${topBtns.length} 颗 / 非图标 ${topBtns.filter((b) => !b.querySelector("svg.annot-icon") && !b.querySelector(".annot-mobile-topbar__dot")).length}`);
+        check("1.4.0-alpha.45 底部通用栏标题仍是文字（粗细 / 字号）",
+            styleGroups().indexOf("widths") < 0 || styleText().includes("粗细"));
+        click('.annot-mobile-rail button[data-tool="select"]');
+        await tick();
+    }
+
+    // 顶部文本颜色气泡：白 / 黑 / 自定义（1.4.0-alpha.47）
+    {
+        click('.annot-mobile-rail button[data-tool="text"]');
+        await tick();
+        const colorBtn = Array.from(q('[data-role="mobile-topbar"]')?.querySelectorAll(".annot-mobile-topbar__btn") ?? [])
+            .find((b) => (b.getAttribute("data-pop") || "") === "textColor");
+        check("1.4.0-alpha.47 顶部有文本颜色入口", !!colorBtn);
+        if (colorBtn) {
+            colorBtn.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+            await tick();
+            const pop = q('[data-role="mobile-pop"]');
+            const presets = pop?.querySelectorAll('[data-action="text-color"]').length ?? 0;
+            const custom = pop?.querySelectorAll('[data-action="mobile-color"]').length ?? 0;
+            check("1.4.0-alpha.47 颜色气泡只有白 / 黑 / 自定义",
+                presets === 2 && custom === 1, `预设 ${presets} / 自定义 ${custom}`);
+        }
+        click('.annot-mobile-rail button[data-tool="select"]');
+        await tick();
+    }
+
+    // 尺寸参数走移动端顶部气泡（1.4.0-alpha.38）
+    {
+        click('.annot-mobile-rail button[data-tool="measure"]');
+        await tick();
+        const topbar = q('[data-role="mobile-topbar"]');
+        const btns = Array.from(topbar?.querySelectorAll(".annot-mobile-topbar__btn") ?? []);
+        check("1.4.0-alpha.48 顶部是长度/角度两颗独立按钮 + 界线 + 箭头 + 单位",
+            btns.length === 5, `${btns.length} 个`);
+        check("1.4.0-alpha.54 角度图标带收细标记",
+            !!q('[data-action="measure-mode-angle"] svg.annot-icon--slim'));
+        const lenPath = q('[data-action="measure-mode-length"] svg path');
+        const tickPath = q('[data-action="measure-ticks"] svg path');
+        // 加粗必须写在 inline style 里：插件 CSS 有
+        // `.annot-root svg.annot-icon [fill="currentColor"] { stroke: none }`，会把属性形式的 stroke 干掉
+        const lenStyle = lenPath?.getAttribute("style") || "";
+        const tickStyle = tickPath?.getAttribute("style") || "";
+        check("1.4.0-alpha.53 长度/界线的加粗写在 inline style 里（不被 stroke:none 覆盖）",
+            lenStyle.includes("stroke:currentColor") && lenStyle.includes("stroke-width:30") &&
+            tickStyle.includes("stroke-width:46"), lenStyle + " | " + tickStyle);
+        check("1.4.0-alpha.38 底部参数栏恢复通用项（颜色 / 粗细 / 线型）",
+            styleGroups().join(",") === "colors,widths,lines", styleGroups().join(","));
+        const headBtn = btns.find((b) => (b.getAttribute("data-pop") || "") === "mHead");
+        check("1.4.0-alpha.38 箭头是气泡入口", !!headBtn);
+        if (headBtn) {
+            headBtn.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+            await tick();
+            const pop = q('[data-role="mobile-pop"]');
+            check("1.4.0-alpha.38 点开后有 6 个箭头图标", 
+                (pop?.querySelectorAll('[data-action="measure-head"]').length ?? 0) === 6,
+                String(pop?.querySelectorAll('[data-action="measure-head"]').length ?? 0));
+            // 上一步点开箭头气泡后顶部栏已重建，必须重新查一次
+            const unitBtn = q('[data-role="mobile-topbar"] [data-pop="mUnit"]');
+            check("1.4.0-alpha.48 单位是独立气泡入口", !!unitBtn);
+            if (unitBtn) {
+                unitBtn.dispatchEvent(new win.MouseEvent("click", {bubbles: true, cancelable: true}));
+                await tick();
+                check("1.4.0-alpha.48 单位气泡里有 9 个长度单位胶囊",
+                    (q('[data-role="mobile-pop"]')?.querySelectorAll(".annot-mobile-pop__chip").length ?? 0) === 9,
+                    (q('[data-role="mobile-pop"]')?.innerHTML || "(空)").slice(0, 80));
+            }
+            // 水平居中只由 CSS 负责，JS 不再写 left（否则会双重偏移 / 算偏）
+            check("1.4.0-alpha.42 气泡水平居中交给样式（JS 不写 left）",
+                (pop?.style.left ?? "") === "", pop?.style.left || "(未设置)");
+            // 气泡必须挂在 .annot-root 下，不能塞进宽度=内容的胶囊里
+            const livePop = q('[data-role="mobile-pop"]');
+            check("1.4.0-alpha.40 气泡挂在根容器下（不受顶部胶囊宽度限制）",
+                !!livePop && livePop.parentElement?.classList.contains("annot-root") === true,
+                livePop?.parentElement?.className || "(无)");
+        }
+        click('.annot-mobile-rail button[data-tool="select"]');
+        await tick();
     }
 
     click('[data-action="close"]');

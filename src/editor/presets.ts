@@ -1,3 +1,4 @@
+import {readItem, writeItem} from "../storage";
 import type {ArrowHead, ArrowStyleKey, ArrowType, NumberBubble} from "../types";
 import {
     legacyOf, legacyOfNumberHead, normalizeArrowHead, normalizeArrowStyle, normalizeArrowType,
@@ -76,6 +77,18 @@ export interface CurrentStyle {
     /** 序号引线末端（箭头 / 圆点 / 方点） */
     numberTip: NumberTipKey;
     /** 序号引线用哪种箭头样式（只在端点=箭头时可见） */
+    /** 文本视觉模式与背景参数 */
+    measureMode: "length" | "angle";
+    measureUnit: "px" | "mm" | "cm" | "m" | "km" | "um" | "pt" | "in" | "ft";
+    measureAngleUnit: "deg" | "rad";
+    measureTicks: boolean;
+    /** 界线长度：留空＝跟着字号走（1.5×），手动拖过才有值 */
+    measureTickUp?: number;
+    measureTickDown?: number;
+    measureHeadMode: "none" | "single" | "double";
+    textMode: "stroke" | "bg";
+    textBgColor: string;
+    textBgOpacity: number;
     numberArrowHead: ArrowHead;
     numberArrowStyle: ArrowStyleKey;
     /** 聚光灯周围遮罩的暗度 0~1（界面显示成百分比） */
@@ -147,6 +160,15 @@ export const DEFAULT_CURRENT: CurrentStyle = {
     numberRound: true,
     numberLeader: true,
     numberTip: DEFAULT_NUMBER_TIP,
+    measureMode: "length",
+    measureUnit: "mm",
+    measureAngleUnit: "deg",
+    measureTicks: true,
+
+    measureHeadMode: "none",
+    textMode: "stroke",
+    textBgColor: "#000000",
+    textBgOpacity: 0.75,
     numberArrowHead: "classic",
     numberArrowStyle: "classic",
     spotlightOpacity: 0.6,
@@ -198,7 +220,7 @@ function colors(input: unknown, fallback: string[]): string[] {
 
 export function loadPresets(): StylePresets {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = readItem(STORAGE_KEY);
         if (!raw) return structuredCloneSafe(DEFAULT_PRESETS);
         const parsed = JSON.parse(raw) as Partial<StylePresets>;
         const loaded: StylePresets = {
@@ -227,7 +249,7 @@ export function loadPresets(): StylePresets {
 
 export function savePresets(presets: StylePresets): void {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+        writeItem(STORAGE_KEY, JSON.stringify(presets));
     } catch {
         // 隐私模式下忽略，本次会话内仍生效
     }
@@ -249,7 +271,7 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
         fontSize: presets.fontSizes[1] ?? presets.fontSizes[0] ?? DEFAULT_CURRENT.fontSize,
     };
     try {
-        const raw = localStorage.getItem(CURRENT_KEY);
+        const raw = readItem(CURRENT_KEY);
         if (!raw) return base;
         const parsed = JSON.parse(raw) as Partial<CurrentStyle>;
         const color = typeof parsed.color === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(parsed.color.trim())
@@ -292,6 +314,23 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
             numberBubble: normalizeNumberBubble(parsed.numberBubble),
             numberRound: parsed.numberRound !== false,
             numberLeader: parsed.numberLeader !== false,
+            measureMode: parsed.measureMode === "angle" ? "angle" : "length",
+            measureUnit: (["px", "mm", "cm", "m", "km", "um", "pt", "in", "ft"] as const).includes(parsed.measureUnit as never)
+                ? parsed.measureUnit as "px" | "mm" | "cm" | "m" | "km" | "um" | "pt" | "in" | "ft" : base.measureUnit,
+            measureAngleUnit: parsed.measureAngleUnit === "rad" ? "rad" : "deg",
+            measureTicks: parsed.measureTicks !== false,
+            // 界线长度只需要存在「这条标注自己」身上；current 不再持久化，
+            // 否则 localStorage 里的旧值会把新默认值顶掉（移动端用的就是这份缓存）。
+            measureTickUp: undefined,
+            measureTickDown: undefined,
+            measureHeadMode: parsed.measureHeadMode === "single" || parsed.measureHeadMode === "double"
+                ? parsed.measureHeadMode : "none",
+            textMode: parsed.textMode === "bg" ? "bg" : "stroke",
+            textBgColor: typeof parsed.textBgColor === "string" &&
+                /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(parsed.textBgColor.trim())
+                ? parsed.textBgColor.trim().toUpperCase()
+                : base.textBgColor,
+            textBgOpacity: number(parsed.textBgOpacity, base.textBgOpacity, 0, 1),
             numberTip: normalizeNumberTip(parsed.numberTip, base.numberTip),
             // 旧预设只有 numberArrowStyle：还原成端点，再写回旧字段
             ...(() => {
@@ -323,10 +362,18 @@ export function loadCurrentStyle(presets: StylePresets): CurrentStyle {
     }
 }
 
-/** 记住这次点选的颜色 / 线宽 / 填充 / 字号，下次打开继续用 */
+let lastSaveAt = 0;
+
+/**
+ * 记住这次点选的颜色 / 线宽 / 填充 / 字号，以及各工具自己的参数，
+ * 下次打开继续用。调用点很多（含拖拽每一帧），所以做 150ms 节流，避免把 localStorage 写崩。
+ */
 export function saveCurrentStyle(style: CurrentStyle): void {
+    const now = Date.now();
+    if (now - lastSaveAt < 150) return;
+    lastSaveAt = now;
     try {
-        localStorage.setItem(CURRENT_KEY, JSON.stringify({
+        writeItem(CURRENT_KEY, JSON.stringify({
             color: style.color,
             lineWidth: style.lineWidth,
             fillOpacity: style.fillOpacity,
@@ -345,6 +392,16 @@ export function saveCurrentStyle(style: CurrentStyle): void {
             numberRound: style.numberRound,
             numberLeader: style.numberLeader,
             numberTip: style.numberTip,
+            measureMode: style.measureMode,
+            measureUnit: style.measureUnit,
+            measureAngleUnit: style.measureAngleUnit,
+            measureTicks: style.measureTicks,
+            measureTickUp: style.measureTickUp,
+            measureTickDown: style.measureTickDown,
+            measureHeadMode: style.measureHeadMode,
+            textMode: style.textMode,
+            textBgColor: style.textBgColor,
+            textBgOpacity: style.textBgOpacity,
             numberArrowHead: style.numberArrowHead,
             numberArrowStyle: style.numberArrowStyle,
             spotlightOpacity: style.spotlightOpacity,

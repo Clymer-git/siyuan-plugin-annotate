@@ -11,6 +11,7 @@
  * 这里只管状态与派生值，界面与画面改动留在编辑器里做。
  */
 
+import {readItem, writeItem} from "../storage";
 import type {ExtendMargins} from "./canvas";
 
 export type ExtendDir = "top" | "right" | "bottom" | "left";
@@ -68,7 +69,7 @@ export function loadExtendState(): ExtendState {
         sides: {...DEFAULT_EXTEND.sides},
     };
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = readItem(STORAGE_KEY);
         if (!raw) return base;
         const parsed = JSON.parse(raw) as Partial<ExtendState>;
         const dirs = (parsed.dirs ?? {}) as Partial<Record<ExtendDir, boolean>>;
@@ -100,7 +101,7 @@ export function loadExtendState(): ExtendState {
 
 export function saveExtendState(state: ExtendState): void {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        writeItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
         // 隐私模式下忽略，本次会话内仍生效
     }

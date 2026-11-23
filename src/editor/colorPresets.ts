@@ -1,3 +1,4 @@
+import {readItem, writeItem} from "../storage";
 /**
  * PC 工具栏「自定义颜色」圆球 + 颜色预设。
  *
@@ -50,7 +51,7 @@ function sanitize(input: unknown): ColorPresetState {
 
 export function loadColorPresets(): ColorPresetState {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = readItem(STORAGE_KEY);
         if (!raw) return {custom: null, saved: []};
         return sanitize(JSON.parse(raw));
     } catch {
@@ -60,7 +61,7 @@ export function loadColorPresets(): ColorPresetState {
 
 export function saveColorPresets(state: ColorPresetState): void {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitize(state)));
+        writeItem(STORAGE_KEY, JSON.stringify(sanitize(state)));
     } catch {
         // 隐私模式下忽略，本次会话内仍然生效
     }

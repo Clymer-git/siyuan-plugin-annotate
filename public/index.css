@@ -1071,6 +1071,43 @@
   box-shadow: 0 0 0 2px var(--annot-panel) inset;
 }
 
+/* 文本颜色这一组单独放宽间距：三个小圆点挨太近会看着像挤成一坨 */
+/* 文本颜色这一组：点与点之间留 10px，与右边的滑块再留 10px，
+   否则整条工具栏挤成一坨（外圈选中态还要向外扩 5px，间距不够就会撞到隔壁） */
+
+/* 文本颜色预设：20px 小圆点；选中不填色，改用「外圈 + 3px 孔隙」，
+   任何底色上都看得见，也不会盖住颜色本身 */
+.annot-swatch--flat,
+.annot-swatch--custom {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px;
+  flex: none;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 5px !important;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .38);
+}
+.annot-swatch--custom > svg,
+.annot-swatch--custom > span {
+  width: 100%;
+  height: 100%;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+.annot-swatch--flat.is-active,
+.annot-swatch--custom.is-active {
+  border: 0;
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 3px;
+  box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .38);
+}
+
 .annot-color-input {
   width: 28px;
   height: 24px;
@@ -1196,8 +1233,8 @@
   border-radius: 0;
   background: transparent !important;
   box-shadow: none !important;
-  /* 打出来的字就是成品颜色（脚本写入对象颜色 + 外沿白影），过程中不做反色；
-     光标颜色由脚本按所在位置的底图明暗挑黑 / 白 */
+  /* 打字时字形由输入框显示（自带描边），画布上那一份同名字形会被藏起来，
+     只留它身下的底色块 —— 双影和“看不见字”两个坑都是这么避开的 */
   caret-color: var(--annot-accent);
   font-family: var(--b3-font-family, sans-serif);
   font-weight: 600;
@@ -1216,6 +1253,45 @@
 }
 
 /* 输入框那圈细提示框：单独一层，只让这条边框反色，文字不受影响 */
+/* 双击尺寸数值时就地弹出的小输入框：居中压在数字原来那一点上 */
+.annot-root .annot-measure-editor {
+  position: absolute;
+  z-index: 7;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--annot-accent);
+  background: #0B1220;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.3;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .32);
+}
+
+/* 只让改数字：单位单独一段，读得到但删不掉 */
+.annot-root .annot-measure-editor input {
+  width: 7ch;
+  min-width: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #FFFFFF;
+  font: inherit;
+  font-weight: inherit;
+  text-align: right;
+  outline: none;
+}
+
+.annot-root .annot-measure-editor span {
+  opacity: .7;
+  white-space: nowrap;
+  user-select: none;
+}
+
 .annot-root .annot-text-frame {
   position: absolute;
   z-index: 4;
@@ -1231,8 +1307,9 @@
   filter: none;
 }
 
-/* 正在编辑的那份 SVG 文字先藏起来，避免和输入框里的字叠成双影 */
-.annot-object.is-editing {
+/* 正在编辑时只藏画布上的字形（让位给输入框，避免双影），
+   但对象本身不整体隐藏 —— 底色块得留着，否则打字时看不到背景效果 */
+.annot-object.is-editing text.annot-shape {
   visibility: hidden;
 }
 
@@ -2672,7 +2749,7 @@ html.annot-fs .b3-dialog__close {
   /* 只锁高度；flex 一起改会让宽度塌成内容宽度（216px 那种），必须显式 100% */
   flex: 0 0 auto;
   width: 100%;
-  height: var(--annot-lock-h, 100dvh);
+  height: var(--annot-lock-h, 100vh);
 }
 
 /* 舞台也锁住：让它跟着键盘缩短的话，SVG 会换一个尺寸，
@@ -2680,6 +2757,87 @@ html.annot-fs .b3-dialog__close {
 .annot-root--mobile.is-keyboard .annot-stage {
   flex: 0 0 auto;
   height: var(--annot-lock-stage, auto);
+}
+
+/* 移动端顶部栏里的尺寸标注控件：紧凑、可横向滚动 */
+.annot-root--mobile .annot-mobile-measure {
+  gap: 6px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.annot-root--mobile .annot-mobile-measure::-webkit-scrollbar {
+  display: none;
+}
+
+.annot-root--mobile .annot-mobile-measure .annot-context__chip {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+  background: var(--annot-hover);
+  color: var(--annot-text);
+}
+
+.annot-root--mobile .annot-mobile-measure .annot-context__chip.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+}
+
+.annot-root--mobile .annot-mobile-measure__unit {
+  flex: none;
+  padding: 4px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--annot-border);
+  background: var(--annot-panel);
+  color: var(--annot-text);
+  font-size: 12px;
+}
+
+.annot-root--mobile .annot-mobile-measure .annot-context__tool {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+/* 参数组标题用图标代替文字（粗细 / 字号）：图标 18px，跟着主题色 */
+.annot-mobile-style__label--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.annot-mobile-style__label--icon svg.annot-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--annot-text-secondary);
+}
+
+/* 气泡里的单位小胶囊：一排平铺，点哪个是哪个 */
+.annot-mobile-pop__chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 26px;
+  padding: 0 8px;
+  margin: 3px;
+  border-radius: 8px;
+  background: var(--annot-hover);
+  color: var(--annot-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.annot-mobile-pop__chip.is-active {
+  background: var(--annot-accent-soft);
+  color: var(--annot-accent);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--annot-accent);
 }
 
 /* PC 的三栏界面在手机上隐藏（DOM 保留，PC 测试仍依赖这些节点） */
@@ -3264,11 +3422,24 @@ html.annot-fs .b3-dialog__close {
 /* 「填充」按钮里的色点 */
 .annot-mobile-topbar__dot {
   display: block;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  /* 小方角：比圆点更省地方，也和下面的文字拉开空隙 */
+  width: 14px;
+  height: 14px;
+  margin: 0 auto;
+  border-radius: 4px;
   border: 1px solid rgba(127, 127, 127, .45);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .7);
+}
+
+/* 顶部圆钮：图标与下方文字之间留出呼吸 */
+.annot-mobile-topbar__btn {
+  gap: 6px;
+  padding: 6px 9px;
+}
+
+.annot-mobile-topbar__btn svg.annot-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .annot-mobile-topbar__btn.is-open {
@@ -3290,10 +3461,17 @@ html.annot-fs .b3-dialog__close {
 
 /* 气泡：相对整条栏水平居中（栏本身居中于屏幕），宽度固定 220 */
 .annot-mobile-pop {
+  /* 挂在 .annot-root 下（不能塞进宽度=内容的顶部胶囊），水平居中由 CSS 自己保证：
+     left:50% + translateX(-50%)。JS 只负责 top 和尖角位置 ——
+     不再用 JS 写 left，避免"测得还没布局完 → 算偏"的老问题。 */
   position: absolute;
-  top: calc(100% + 9px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  /* 居中用「左右都贴 0 + margin auto」：不依赖 transform，
+     某些 WebView 里 transform 会被包含块/合成层吃掉，导致 left:50% 直接露出来（整体右移半屏）。 */
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   /* 宽度跟着内容走：固定宽度时序号那四个大格子会把气泡撑变形 */
   width: max-content;
   max-width: min(320px, calc(100vw - 24px));
@@ -3324,6 +3502,26 @@ html.annot-fs .b3-dialog__close {
   border-top: 1px solid rgba(127, 127, 127, .14);
   border-radius: 2px 0 0 0;
   background: color-mix(in srgb, var(--annot-panel) 97%, transparent);
+}
+
+/* 移动端气泡里的滑块（描边宽度 / 背景透明度）：独占一行 */
+.annot-mobile-slider {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 2px;
+  font-size: 12px;
+  color: var(--annot-text-dim);
+}
+.annot-mobile-slider > span { flex: none; white-space: nowrap; }
+.annot-mobile-slider > input { flex: 1; min-width: 0; }
+.annot-mobile-slider > b {
+  flex: none;
+  min-width: 38px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--annot-text);
 }
 
 .annot-mobile-pop__item {
@@ -3852,13 +4050,16 @@ html.annot-fs .b3-dialog__close {
   background: transparent;
 }
 
+/* 🚨 红线逻辑：此处绝对不能因为键盘弹起而重算高度或改变 bottom 属性，键盘必须直接遮挡工具栏！
+   所以这里只认 100vh —— vh 不随虚拟键盘变化；改用 100dvh 会让整屏随键盘缩短，
+   底部两栏被挤到键盘上方（冷启动第一次最容易看到）。容器同时禁止滚动。 */
 .b3-dialog.annot-dialog-fullscreen > .b3-dialog__container,
 .b3-dialog.annot-dialog-fullscreen .annot-dialog.b3-dialog__container {
   width: 100vw !important;
   height: 100vh !important;
-  height: 100dvh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
   max-width: none;
-  max-height: none;
   margin: 0;
   border-radius: 0 !important;
   box-shadow: none;
@@ -4114,7 +4315,7 @@ html.annot-fs .b3-dialog__close {
 .annot-smart-region {
   fill: color-mix(in srgb, var(--annot-accent) 8%, transparent);
   stroke: var(--annot-accent);
-  stroke-width: 1.4;
+  stroke-width: 2.4;
   stroke-dasharray: 5 4;
   cursor: pointer;
   pointer-events: all;
@@ -4140,6 +4341,12 @@ html.annot-fs .b3-dialog__close {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+}
+
+/* 文本那三个颜色点：只加大「点与点之间」的间距。
+   必须写成双类，否则会被上面那条 .annot-context__chips { gap: 3px } 盖掉（它排在后面） */
+.annot-context__chips.annot-context__chips--text-colors {
+  gap: 10px;
 }
 
 .annot-context__chip {
@@ -4425,6 +4632,41 @@ html.annot-fs .b3-dialog__close {
 .annot-root--mobile .annot-context-bar,
 .annot-root--mobile .annot-side-handle {
   display: none !important;
+}
+
+/* 尺寸标注例外：它的参数要待在画面顶部那条悬浮窗里（和箭头工具同一个位置），
+   不再塞进底部工具栏上方。 */
+/* 尺寸标注的顶部气泡：水平居中，白底 + 投影，和手机上别的气泡一个观感 */
+.annot-root--mobile .annot-context-bar.is-measure {
+  display: flex !important;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  top: 10px;
+  max-width: calc(100vw - 24px);
+  gap: 6px 8px;
+  padding: 7px 11px;
+  border-radius: 14px;
+  background: var(--annot-panel);
+  border: 1px solid var(--annot-border);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+  /* 触摸目标放大到能点的尺寸 */
+  --annot-ctx-h: 30px;
+}
+
+.annot-root--mobile .annot-context-bar.is-measure .annot-context__chip {
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+.annot-root--mobile .annot-context-bar.is-measure .annot-context__tool {
+  width: 30px;
+  height: 30px;
+}
+
+.annot-root--mobile .annot-context-bar.is-measure select {
+  font-size: 12px;
+  padding: 4px 6px;
 }
 .annot-root--mobile .annot-side-section[data-section="layers"] {
   flex: 0 0 auto;
@@ -4748,4 +4990,11 @@ html.annot-fs .b3-dialog__close {
   width: 32px;
   height: 19px;
   display: block;
+}
+
+
+/* 角度那颗原稿是粗描边图形，等比收一点（线径跟着变细），与其他图标观感一致
+   缩放不影响矢量清晰度；只作用在这一点上，不改图标本身 */
+.annot-mobile-topbar__btn svg.annot-icon--slim {
+  transform: scale(.86);
 }

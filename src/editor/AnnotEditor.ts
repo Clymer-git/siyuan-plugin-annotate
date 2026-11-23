@@ -13,6 +13,10 @@ import {Dialog, showMessage} from "siyuan";
 import {applyTheme, watchTheme, type ThemePreference} from "./theme";
 import {EditorHistory, type EditorSnapshot} from "./history";
 import {SVG_NS, distance, midpoint, svgEl} from "./geometry";
+import {FONT_ICON, MEASURE_ANGLE_ICON, MEASURE_LENGTH_ICON, MEASURE_TICK_ICON, MEASURE_UNIT_ICON,
+    TEXT_BG_ICON, TEXT_STROKE_ICON, WIDTH_ICON} from "./mobileIcons";
+import {LENGTH_UNITS, angleAt, formatAngle, formatMeasure, measureLabelPoint, measureNumberText,
+    measureSuffix} from "./measure";
 import {MosaicRenderer} from "./mosaic";
 import {BlurRenderer, DEFAULT_BLUR_RADIUS, MAX_BLUR_RADIUS} from "./blur";
 import {loadScene, exportFlatPng} from "./persistence";
@@ -78,25 +82,27 @@ import {
     CROP_HANDLES, CROP_RATIO_PRESETS, dragCropRect, fitCropRatio, moveCropRect,
     resizeCropRect, type CropHandle,
 } from "./crop";
+import {readItem, writeItem} from "../storage";
 import {CropSession} from "./cropSession";
 import {
     renderObject, renderDraft, renderHandles, defaultPointerTip, getBounds, boundsCenter,
     translateObject, scaleObjectToBounds, unrotatePoint, setRotation,
     defaultStyle, DEFAULT_TEXT_STROKE_COLOR, DEFAULT_TEXT_STROKE_WIDTH, type Bounds,
+    numberRadiusFor,
 } from "./shapes";
 import {
     TEXT_LINE_HEIGHT, charWidthRatio, layoutText, measureText, reflowTextObjects, textBlockSize, wrapWidthOf,
 } from "./textLayout";
 import {ContrastSampler, contrastInk} from "./contrast";
 import {
-    angleOffsetFromGrid, maxPathDeviation, shouldSnapTouchLine, snapDirection,
+    angleOffsetFromGrid, maxPathDeviation, shouldSnapTouchLine, snapDirection, snapDirectionBy,
 } from "./line";
 import {
     createEmptyScene, createId, reindexNumbers, TYPE_LABELS,
     type AnnotObject, type AnnotScene, type AnnotType, type ArrowGeometry,
     type CanvasState, type CropWindow, type EllipseGeometry, type Geometry, type HighlightGeometry,
     type BlurGeometry, type LineGeometry, type MagnifierGeometry, type MosaicGeometry,
-    type NumberBubble, type NumberGeometry, type Point, type PropertyPatch, type RectGeometry,
+    type MeasureGeometry, type NumberBubble, type NumberGeometry, type Point, type PropertyPatch, type RectGeometry,
     type SpotlightGeometry,
     type TextGeometry, type ToolType, type ViewportState,
 } from "../types";
@@ -176,6 +182,7 @@ const TOOL_HINTS: Record<ToolType, string> = {
     line: "画线：拖一下直线；点一下定起点，再点连折线，双击或 Esc 结束；按 Shift 锁定水平/垂直/45°",
     spotlight: "聚光灯：按住拖出要照亮的一块，四周自动压暗；拖框挪位置，拖角点改大小",
     magnifier: "放大镜：按住拖出显示框；拖小圆点换「看哪儿」，拖框挪位置，连线始终跟着",
+    measure: "尺寸标注：拖动量长度；切到角度后依次点「起点、顶点、终点」",
 };
 
 /**
@@ -246,7 +253,7 @@ type PresetSlotKind = "color" | "width" | "dash" | "fill" | "font";
 /** 色轮弹窗当前作用的目标 */
 type ColorPopTarget =
     | {kind: "current"}
-    | {kind: "prop"; prop: "color" | "textStrokeColor" | "fillColor" | "numberTextColor"}
+    | {kind: "prop"; prop: "color" | "textStrokeColor" | "textBgColor" | "fillColor" | "numberTextColor"}
     | {kind: "extend-bg"}
     | null;
 
@@ -289,6 +296,12 @@ const TB_LEADER_OFF = `${TB_SVG}><circle cx="6" cy="8" r="3.2" fill="currentColo
     + ` stroke-dasharray="2 3" opacity=".45"/></svg>`;
 
 /** 序号的四种样式：顺序即界面顺序（实心圆 → 空心圆 → 定位 → 纯数字） */
+/** 文本的两种托底方式 */
+const TEXT_MODES: Array<{key: "stroke" | "bg"; label: string; hint: string}> = [
+    {key: "stroke", label: "描边", hint: "文字外沿加一圈实线，复杂底图上也能读清"},
+    {key: "bg", label: "背景", hint: "文字后面垫一层半透明色块"},
+];
+
 const NUMBER_BUBBLES: Array<{key: NumberBubble; label: string; short: string}> = [
     {key: "solid", label: "实心圆气泡", short: "实心"},
     {key: "hollow", label: "空心圆气泡", short: "空心"},
@@ -335,11 +348,12 @@ const TOOL_ITEMS: {tool: ToolType; label: string; key: string}[] = [
     {tool: "rect", label: "矩形", key: "r"},
     {tool: "ellipse", label: "椭圆", key: "e"},
     {tool: "line", label: "画线", key: "k"},
-    {tool: "text", label: "文字", key: "t"},
+    {tool: "text", label: "文本", key: "t"},
     {tool: "number", label: "序号", key: "n"},
     {tool: "mosaic", label: "马赛克", key: "m"},
     {tool: "blur", label: "模糊", key: "b"},
     {tool: "highlight", label: "高亮", key: "l"},
+    {tool: "measure", label: "尺寸", key: "u"},
     {tool: "spotlight", label: "聚光灯", key: "p"},
     {tool: "magnifier", label: "放大镜", key: "g"},
 ];
@@ -380,6 +394,8 @@ export class AnnotEditor {
     private stageH = 0;
     private transformLayer: HTMLElement | null = null;
     private baseImage: HTMLImageElement | null = null;
+    /** 底图地址：万一底图被意外清空（宿主撤销等）可以立刻补回来 */
+    private baseUrl = "";
     /** 选区识别：Worker（懒创建，创建失败就退回主线程，不影响使用） */
     private smartWorker: Worker | null = null;
     private smartWorkerBroken = false;
@@ -426,6 +442,15 @@ export class AnnotEditor {
     /** 当前输入框的光标挑色函数（输入 / 移动光标时重算） */
     private refreshTextCaret: (() => void) | null = null;
     private editingTextId: string | null = null;
+    /** 编辑框跟随缩放重排（滚轮放大缩小时用） */
+    private textLayout: (() => void) | null = null;
+    /** 角度标注的三点收集：起点 → 顶点 → 终点 */
+    private measurePoints: Point[] = [];
+    /** 双击数值时的那个输入框（含单位后缀的小壳子） */
+    private measureEditor: HTMLElement | null = null;
+    /** 当前输入框的提交动作：点画布时手动触发一次，保证「点外面也保存」 */
+    private measureCommit: (() => void) | null = null;
+    private measureEditingId: string | null = null;
     /** 单击「已选中的文字」时先记住位置，抬起时若没拖动就进编辑态 */
     private pendingTextEdit: {id: string; start: Point} | null = null;
     private readonly mosaic = new MosaicRenderer();
@@ -1027,6 +1052,14 @@ export class AnnotEditor {
 
         this.stage = this.root.querySelector<HTMLElement>(".annot-stage");
         this.transformLayer = this.root.querySelector<HTMLElement>('[data-role="transform"]');
+        // 焦点必须在插件内部：思源的撤销只作用于「当前获得焦点的编辑器」，
+        // 焦点留在正文里，它就有机会把图片块一起撤掉。
+        this.root.setAttribute("tabindex", "-1");
+        // 先把正文里正在编辑的元素失焦，再把焦点交给插件：
+        // 宿主的撤销作用于「当前聚焦的可编辑元素」，焦点不在正文，它就没得撤。
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active !== this.root && active.closest?.(".protyle")) active.blur();
+        this.root.focus?.({preventScroll: true} as FocusOptions);
         this.baseImage = this.root.querySelector<HTMLImageElement>('[data-role="base"]');
         this.svg = this.root.querySelector<SVGSVGElement>('[data-role="svg"]');
         this.statusDimensions = this.root.querySelector<HTMLElement>('[data-role="dimensions"]');
@@ -1052,7 +1085,7 @@ export class AnnotEditor {
 
         // 主题偏好本地持久化；卸载插件时会清掉
         try {
-            const saved = localStorage.getItem(THEME_STORAGE_KEY);
+            const saved = readItem(THEME_STORAGE_KEY);
             if (saved === "follow" || saved === "light" || saved === "dark") this.themePreference = saved;
         } catch {
             // 隐私模式下 localStorage 不可用，按跟随思源处理
@@ -1301,6 +1334,92 @@ export class AnnotEditor {
                     ? picked.style.bubbleRound !== false : this.current.numberRound;
                 this.setNumberRound(!on);
             }
+            else if (action === "measure-mode-length" || action === "measure-mode-angle") {
+                const value = action === "measure-mode-angle" ? "angle" : "length";
+                this.applyProperty({measureMode: value}, true);
+                this.measurePoints = [];
+                this.mobileStyleKey = "";
+                this.render();
+                this.renderMobileStyle();
+                this.renderMobileTopbar();
+            }
+            else if (action === "measure-mode-toggle") {
+                const cur = this.current.measureMode ?? "length";
+                const pickedNow = this.getObject(this.selectedId);
+                const modeNow = pickedNow?.type === "measure"
+                    ? (pickedNow.geometry as MeasureGeometry).mode : cur;
+                this.applyProperty({measureMode: modeNow === "angle" ? "length" : "angle"}, true);
+                this.mobileStyleKey = "";
+                this.render();
+                this.renderMobileStyle();
+                this.renderMobileTopbar();
+            }
+            else if (action === "measure-unit-pick") {
+                const value = button.getAttribute("data-value") ?? "";
+                if (value === "deg" || value === "rad") {
+                    this.applyProperty({measureAngleUnit: value}, true);
+                } else if (["px", "mm", "cm", "m", "km", "um", "pt", "in", "ft"].includes(value)) {
+                    this.applyProperty({measureUnit: value as PropertyPatch["measureUnit"]}, true);
+                }
+                this.render();
+                this.renderMobileStyle();
+                this.renderMobileTopbar();
+            }
+            else if (action === "measure-ticks") {
+                this.applyProperty({measureTicks: !(this.measureTicksOn())}, true);
+                this.render();
+                // 移动端顶栏不重建的话，那颗按钮的高亮永远不变，看着像"点了没反应"
+                this.mobileStyleKey = "";
+                this.renderMobileStyle();
+                this.renderMobileTopbar();
+            }
+            else if (action === "measure-head-mode") {
+                const value = button.getAttribute("data-value");
+                if (value === "none" || value === "single" || value === "double") {
+                    this.applyProperty({measureHeadMode: value}, true);
+                }
+                this.render();
+                this.renderMobileStyle();
+            }
+            else if (action === "measure-head") {
+                const value = button.getAttribute("data-value") as ArrowHead;
+                if (value) this.applyProperty({arrowHead: value}, true);
+                this.render();
+                this.renderMobileStyle();
+            }
+            else if (action === "measure-mode") {
+                const value = button.getAttribute("data-value");
+                if (value === "length" || value === "angle") this.applyProperty({measureMode: value}, true);
+                this.measurePoints = [];
+                this.render();
+                // 移动端那条栏有缓存 key，必须清掉才会按新模式重建
+                this.mobileStyleKey = "";
+                this.renderMobileStyle();
+            }
+            else if (action === "text-mode-toggle") {
+                const cur = this.textColorProp() === "textBgColor" ? "bg" : "stroke";
+                this.applyProperty({textMode: cur === "bg" ? "stroke" : "bg"}, true);
+                this.render();
+            }
+            else if (action === "text-mode") {
+                const value = button.getAttribute("data-value");
+                if (value === "bg" || value === "stroke") this.applyProperty({textMode: value}, true);
+                this.render();
+            }
+            else if (action === "text-color") {
+                const hex = button.getAttribute("data-value") ?? "#FFFFFF";
+                this.applyProperty({[this.textColorProp()]: hex} as PropertyPatch, true);
+                this.render();
+            }
+            else if (action === "text-color-custom") {
+                const prop = this.textColorProp();
+                const picked = this.getObject(this.selectedId);
+                const pickedStyle = picked?.type === "text" ? picked.style : null;
+                const initial = prop === "textBgColor"
+                    ? (pickedStyle?.textBgColor ?? this.current.textBgColor ?? "#000000")
+                    : (pickedStyle?.textStrokeColor ?? this.current.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR);
+                this.openColorPop(button as HTMLElement, {kind: "prop", prop}, initial);
+            }
             else if (action === "number-color") {
                 const prop = button.getAttribute("data-value") as "fillColor" | "color" | "numberTextColor";
                 const picked = this.getObject(this.selectedId);
@@ -1507,6 +1626,16 @@ export class AnnotEditor {
         }, {signal});
         this.root?.addEventListener("change", (event) => {
             const ctx = (event.target as HTMLElement | null)?.getAttribute?.("data-ctx");
+            if (ctx === "measureUnit") {
+                // 长度与角度分开存；白名单要跟着单位表一起长
+                const unit = (event.target as HTMLSelectElement).value;
+                if (unit === "deg" || unit === "rad") {
+                    this.applyProperty({measureAngleUnit: unit}, true);
+                } else if (["px", "mm", "cm", "m", "km", "um", "pt", "in", "ft"].includes(unit)) {
+                    this.applyProperty({measureUnit: unit as PropertyPatch["measureUnit"]}, true);
+                }
+                return;
+            }
             if (ctx === "fontFamily") {
                 const select = event.target as HTMLSelectElement;
                 if (select.value === "__upload__") {
@@ -1806,6 +1935,11 @@ export class AnnotEditor {
                 }
                 const el = (e.target as Element | null)?.closest?.("[data-object-id]");
                 const object = this.getObject(el?.getAttribute("data-object-id") ?? null);
+                if (object?.type === "measure") {
+                    e.preventDefault();
+                    this.beginMeasureTextEdit(object);
+                    return;
+                }
                 if (object?.type === "text") {
                     e.preventDefault();
                     if (this.editingTextId === object.id) return;
@@ -1825,6 +1959,13 @@ export class AnnotEditor {
             const isTouch = (event as PointerEvent).pointerType === "touch";
             if (isTouch && this.touchPoints.size >= 1) return;
             const target = event.target as Element | null;
+            // 点悬浮栏 / 顶栏 / 取色器这些「调样式的地方」时保持编辑态：
+            // 用户是想边打字边调描边，一点按钮字就没了没法用
+            const onChrome = !!target?.closest?.(
+                '[data-role="context-bar"], .annot-toolbar, .annot-mobile-topbar,'
+                + ' .annot-mobile-style, .annot-mobile-rail, .annot-color-pop, .annot-attr-pop,'
+                + ' .annot-mobile-pop, .annot-mobile-fabs');
+            if (onChrome) return;
             const onCanvas = !!target?.closest?.('[data-role="svg"], [data-role="stage"]');
             this.finishTextEdit();
             if (!onCanvas) return;
@@ -1837,7 +1978,19 @@ export class AnnotEditor {
             event.preventDefault();
             event.stopPropagation();
         }, {capture: true, signal});
-        document.addEventListener("keydown", (e) => this.onKeyDown(e), {capture: true, signal});
+        // 挂在 window 的捕获阶段：比 document 更早，能抢在思源自己的撤销监听之前。
+        // （挂在 document 时，宿主若在 window 捕获阶段监听，会先执行 —— 结果就是
+        //   同一次 Cmd+Z 既撤了图形、又把图片撤没了。）
+        window.addEventListener("keydown", (e) => this.onKeyDown(e), {capture: true, signal});
+        // 双保险：某些外壳会在 window 捕获阶段就 stopImmediatePropagation，
+        // 这里在 document 捕获阶段再拦一次撤销键，两层都吃掉才算稳。
+        document.addEventListener("keydown", (e) => {
+            const mod = e.ctrlKey || e.metaKey;
+            const key = (e.key || "").toLowerCase();
+            if (!mod || (key !== "z" && key !== "y")) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+        }, {capture: true, signal});
     }
 
     // ---------------------------------------------------------------- 底图与视口
@@ -1898,6 +2051,7 @@ export class AnnotEditor {
     private loadBaseImage(url: string, canvas?: CanvasState): void {
         const img = this.baseImage;
         if (!img) return;
+        this.baseUrl = url;
         const signal = this.abort.signal;
         img.addEventListener("load", () => {
             this.naturalWidth = img.naturalWidth || img.width;
@@ -2106,6 +2260,9 @@ export class AnnotEditor {
         // 屏幕 1px 对应 1/zoom 个图片单位，手柄按屏幕像素画出来就永远锐利。
         this.applySvgViewBox();
         if (this.statusZoom) this.statusZoom.textContent = `${Math.round(zoom * 100)}%`;
+        // 输入框挂在 stage 上（不随 transform 缩放），所以每次视口变化都要按新坐标重排一次，
+        // 否则画面放大了、框还停在原来的屏幕位置
+        this.textLayout?.();
         // 手机上底栏被隐藏，百分比显示在画布底部正中的胶囊里
         this.syncMobileZoom();
         this.scene.viewport = {...this.viewport};
@@ -2180,7 +2337,8 @@ export class AnnotEditor {
         // 字号预设同时决定序号圆点大小
         if (type === "number") {
             const n = copy as NumberGeometry;
-            n.radius = Math.max(12, this.current.fontSize * 0.65);
+            // 圆点跟着字号长：字号 24 时半径 19，直径 38，装得下 24px 的字而不挤
+            n.radius = numberRadiusFor(this.current.fontSize);
             n.format = this.current.numberFormat;
             n.bubble = this.current.numberBubble;
             n.leader = this.current.numberLeader;
@@ -2243,6 +2401,7 @@ export class AnnotEditor {
 
     private restore(snapshot: EditorSnapshot | null): boolean {
         if (!snapshot) return false;
+        this.ensureBaseImage();
         this.scene.objects = snapshot.objects;
         this.scene.canvas = snapshot.canvas;
         reindexNumbers(this.scene.objects);
@@ -2252,12 +2411,27 @@ export class AnnotEditor {
         return true;
     }
 
+    /** 兜底：底图地址被清空时补回去（撤销链路上的老伤口） */
+    private ensureBaseImage(): void {
+        const img = this.baseImage;
+        if (!img || !this.baseUrl) return;
+        if (!img.getAttribute("src")) img.setAttribute("src", this.baseUrl);
+    }
+
     private undo(): void {
-        if (this.restore(this.history.undo())) this.updateHint();
+        this.ensureBaseImage();
+        this.restore(this.history.undo());
+        // 撤到底时按钮必须立刻变灰：以前只 updateHint()，按钮状态不刷新，
+        // 看着还能点，用户就一直按，最后穿透到宿主把图片撤没了。
+        this.renderToolbar();
+        this.updateHint();
     }
 
     private redo(): void {
-        if (this.restore(this.history.redo())) this.updateHint();
+        this.ensureBaseImage();
+        this.restore(this.history.redo());
+        this.renderToolbar();
+        this.updateHint();
     }
 
     private deleteObject(id: string | null): void {
@@ -2275,8 +2449,51 @@ export class AnnotEditor {
 
     /** 属性面板：实时改对象，change 结束时才提交一次历史 */
     private applyProperty(patch: PropertyPatch, commit: boolean): void {
-        const object = this.getObject(this.selectedId);
-        if (!object) return;
+        // 打字过程中选中态可能已经清空，这时参数要落到「正在编辑的那一段文字」上，
+        // 否则在悬浮栏点模式 / 拖滑块会毫无反应
+        const object = this.getObject(this.selectedId) ?? this.getObject(this.editingTextId);
+        if (!object) {
+            // 还没落笔画字（刚选上文本工具）：这些参数改的是「下一次的默认值」，
+            // 必须允许提前切到背景，否则用户得先写一段字才能改，很别扭
+            let presetTouched = false;
+            if (patch.measureMode === "length" || patch.measureMode === "angle") {
+                this.current.measureMode = patch.measureMode;
+                presetTouched = true;
+            }
+            if (patch.measureUnit) {
+                this.current.measureUnit = patch.measureUnit;
+                presetTouched = true;
+            }
+            if (patch.measureAngleUnit) {
+                this.current.measureAngleUnit = patch.measureAngleUnit;
+                presetTouched = true;
+            }
+            if (patch.textMode === "stroke" || patch.textMode === "bg") {
+                this.current.textMode = patch.textMode;
+                presetTouched = true;
+            }
+            if (patch.textStrokeWidth !== undefined) {
+                this.current.textStrokeWidth = patch.textStrokeWidth;
+                presetTouched = true;
+            }
+            if (patch.textStrokeColor) {
+                this.current.textStrokeColor = patch.textStrokeColor;
+                presetTouched = true;
+            }
+            if (patch.textBgColor) {
+                this.current.textBgColor = patch.textBgColor;
+                presetTouched = true;
+            }
+            if (patch.textBgOpacity !== undefined) {
+                this.current.textBgOpacity = Math.max(0, Math.min(1, Number(patch.textBgOpacity)));
+                presetTouched = true;
+            }
+            if (presetTouched) {
+                saveCurrentStyle(this.current);
+                this.render();
+            }
+            return;
+        }
         // 属性面板里的调整同样写回当前预设，之后继续画就沿用这份外观
         let styleTouched = false;
         if (patch.color) {
@@ -2287,6 +2504,46 @@ export class AnnotEditor {
         if (patch.lineWidth !== undefined) {
             object.style.lineWidth = patch.lineWidth;
             this.current.lineWidth = patch.lineWidth;
+            styleTouched = true;
+        }
+        if (patch.measureMode === "length" || patch.measureMode === "angle") {
+            (object.geometry as MeasureGeometry).mode = patch.measureMode;
+            this.current.measureMode = patch.measureMode;
+            styleTouched = true;
+        }
+        if (patch.measureUnit) {
+            object.style.measureUnit = patch.measureUnit;
+            this.current.measureUnit = patch.measureUnit;
+            styleTouched = true;
+        }
+        if (patch.measureAngleUnit) {
+            object.style.measureAngleUnit = patch.measureAngleUnit;
+            this.current.measureAngleUnit = patch.measureAngleUnit;
+            styleTouched = true;
+        }
+        if (patch.arrowHead) {
+            object.style.arrowHead = patch.arrowHead;
+            this.current.arrowHead = patch.arrowHead;
+            styleTouched = true;
+        }
+        if (patch.measureTicks !== undefined) {
+            object.style.measureTicks = patch.measureTicks;
+            this.current.measureTicks = patch.measureTicks;
+            styleTouched = true;
+        }
+        if (patch.measureTickUp !== undefined) {
+            object.style.measureTickUp = patch.measureTickUp;
+            this.current.measureTickUp = patch.measureTickUp;
+            styleTouched = true;
+        }
+        if (patch.measureTickDown !== undefined) {
+            object.style.measureTickDown = patch.measureTickDown;
+            this.current.measureTickDown = patch.measureTickDown;
+            styleTouched = true;
+        }
+        if (patch.measureHeadMode === "none" || patch.measureHeadMode === "single" || patch.measureHeadMode === "double") {
+            object.style.measureHeadMode = patch.measureHeadMode;
+            this.current.measureHeadMode = patch.measureHeadMode;
             styleTouched = true;
         }
         if (patch.opacity !== undefined) object.style.opacity = patch.opacity;
@@ -2338,6 +2595,23 @@ export class AnnotEditor {
             this.current.textStrokeWidth = patch.textStrokeWidth;
             styleTouched = true;
         }
+        if (patch.textMode === "stroke" || patch.textMode === "bg") {
+            object.style.textMode = patch.textMode;
+            this.current.textMode = patch.textMode;
+            styleTouched = true;
+        }
+        if (patch.textBgColor) {
+            object.style.textBgColor = patch.textBgColor;
+            this.current.textBgColor = patch.textBgColor;
+            styleTouched = true;
+        }
+        // 滑块给的是 0~100 的整数，存进去统一成 0~1
+        if (patch.textBgOpacity !== undefined) {
+            const value = Math.max(0, Math.min(1, Number(patch.textBgOpacity)));
+            object.style.textBgOpacity = value;
+            this.current.textBgOpacity = value;
+            styleTouched = true;
+        }
         if (styleTouched) saveCurrentStyle(this.current);
         if (patch.text !== undefined && object.type === "text") {
             (object.geometry as TextGeometry).text = patch.text;
@@ -2356,6 +2630,9 @@ export class AnnotEditor {
         } else {
             this.renderCanvas();
         }
+        // 编辑中的文字由输入框显示，它的描边要跟着一起改：
+        // 不刷新的话，切到背景模式后输入框还挂着描边，看着像「没生效」
+        this.syncTextEditorLook();
     }
 
     private setHovered(id: string | null): void {
@@ -2391,7 +2668,8 @@ export class AnnotEditor {
         // 输入框宽度贴着已有文字（不铺满整张画布），但最多到画布右边
         const measureWidth = (value: string): number => {
             const block = textBlockSize(value, geometry.fontSize, wrapWidth);
-            return Math.min(wrapWidth, Math.max(geometry.fontSize * 2, block.width + geometry.fontSize * 0.5));
+            // 宽度贴着字形本身（留 2px 给光标），这样底色块（bounds + 内边距）能完整包住输入框
+            return Math.min(wrapWidth, Math.max(geometry.fontSize * 2, block.width + 2));
         };
         editor.style.left = `${position.x}px`;
         // 行高的半行距会把字形往下压 0.075 个字高，补回来才和提交后的位置对齐
@@ -2413,17 +2691,25 @@ export class AnnotEditor {
             }
         };
         keepVisible();
-        // 打出来的字就是成品颜色（红的还是红）＋外沿白影，过程中不做任何反色
+        // 打字时输入框就是成品外观：颜色、以及「描边 / 背景」二选一。
+        // 交给 syncTextEditorLook 统一处理 —— 选背景时这里就不能再挂描边，
+        // 否则打字过程中看着一直是描边，切了也白切。
         editor.style.color = object.style.color;
-        const strokeEnabled = object.style.textStrokeEnabled !== false;
-        const strokeColor = object.style.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR;
-        const strokeWidth = Math.max(0, object.style.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
-        if (strokeEnabled && strokeWidth > 0) {
-            const r = Math.max(1, Math.round(strokeWidth * zoom));
-            const offsets = [[-r, -r], [0, -r], [r, -r], [-r, 0], [r, 0], [-r, r], [0, r], [r, r]];
-            editor.style.textShadow = offsets
-                .map(([x, y]) => `${x}px ${y}px 0 ${strokeColor}`).join(", ");
+        {
+            // 按当前模式决定输入框要不要挂描边：选背景时这里就不该有描边，
+            // 否则打字全程看着都是描边，切了等于没切
+            const bgMode = object.style.textMode === "bg";
+            const width = Math.max(0, object.style.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
+            if (!bgMode && object.style.textStrokeEnabled !== false && width > 0) {
+                editor.style.webkitTextStroke = `${Math.max(0.5, width * zoom)}px ${
+                    object.style.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR}`;
+                editor.style.setProperty("paint-order", "stroke fill");
+            } else {
+                editor.style.webkitTextStroke = "";
+                editor.style.paintOrder = "";
+            }
         }
+
         // 只给「细框」和「光标」做自动黑白：细框单独一层用混合模式反色，
         // 光标按它所在位置的底图明暗取黑或白 —— 文字本身不参与。
         const frame = document.createElement("div");
@@ -2439,9 +2725,29 @@ export class AnnotEditor {
 
         const syncFrame = (): void => {
             if (!this.textFrame) return;
+            // 位置也要一起同步：那圈细框是单独一层，只同步宽高的话，
+            // 缩放时字跟着画面走了、框还钉在原处，看着就是「文本框没动」
+            this.textFrame.style.left = editor.style.left;
+            this.textFrame.style.top = editor.style.top;
             this.textFrame.style.width = editor.style.width;
             this.textFrame.style.height = editor.style.height;
         };
+        // 位置、字号、宽高统一按当前缩放重算：滚轮放大缩小时输入框要跟着画面走
+        const layoutEditor = (): void => {
+            const scale = this.viewport.zoom || 1;
+            const at = this.imageToScreen({x: geometry.x, y: geometry.y});
+            editor.style.left = `${at.x}px`;
+            editor.style.top = `${at.y}px`;
+            editor.style.fontSize = `${geometry.fontSize * scale}px`;
+            editor.style.lineHeight = `${TEXT_LINE_HEIGHT}`;
+            editor.style.width = `${measureWidth(editor.value) * scale}px`;
+            const block = textBlockSize(editor.value, geometry.fontSize, wrapWidth);
+            const rows = Math.max(1, block.lines.length);
+            editor.style.height = `${rows * geometry.fontSize * TEXT_LINE_HEIGHT * scale}px`;
+            syncFrame();
+        };
+        this.textLayout = layoutEditor;
+
         const caretCanvas = (): Point => {
             const block = textBlockSize(editor.value, geometry.fontSize, wrapWidth);
             const index = Math.max(0, Math.min(editor.value.length, editor.selectionStart ?? editor.value.length));
@@ -2503,12 +2809,14 @@ export class AnnotEditor {
         }, {signal});
         // 文字变长 → 输入框跟着变宽，到画布右边就停住开始换行
         editor.addEventListener("input", () => {
-            editor.style.width = `${measureWidth(editor.value) * zoom}px`;
-            editor.style.height = "auto";
-            const grown = Math.max(editor.scrollHeight, geometry.fontSize * TEXT_LINE_HEIGHT * zoom);
-            editor.style.height = `${grown}px`;
-            syncFrame();
+            // 文字实时回写：画布上的 SVG 是「所见即所得」的那一份（描边 / 背景都在它身上），
+            // 输入框只负责接收按键与光标，本身不显示字形
+            geometry.text = editor.value;
+            // 高度按「行数 × 行高」算，和画布那边同一套排版；
+            // 读 scrollHeight 会被中文输入法上屏后的候选框撑长，输入框就往下跳一截
+            layoutEditor();
             keepVisible();
+            this.renderCanvas();
             refreshCaret();
         }, {signal});
         // 光标移动也要重新挑色：在同一行里从黑底滑到白底时，光标要跟着翻色
@@ -2570,6 +2878,7 @@ export class AnnotEditor {
         const id = this.editingTextId;
         if (!id) return;
         this.editingTextId = null;
+        this.textLayout = null;
         // 退出输入：把「键盘态」一起摘掉，三栏与输入框位移全部还原
         this.keyboardSync?.();
         const value = this.textEditor?.value ?? "";
@@ -2608,6 +2917,23 @@ export class AnnotEditor {
             case "line":
                 // 两点：起点 + 跟随指针的末端；折线时末端始终是「预览点」
                 return {type: tool, geometry: {points: [{...start}, {...start}]}};
+            case "measure": {
+                const mode = this.current.measureMode ?? "length";
+                if (mode === "angle") {
+                    // 角度：按下的点就是顶点，第一条边先朝正右，拖多远由 updateDraft 撑开
+                    return {
+                        type: tool,
+                        geometry: {
+                            mode: "angle", vertex: {...start},
+                            start: {x: start.x + 1, y: start.y}, end: {...start},
+                        } as MeasureGeometry,
+                    };
+                }
+                return {
+                    type: tool,
+                    geometry: {mode: "length", start: {...start}, end: {...start}} as MeasureGeometry,
+                };
+            }
             case "rect":
                 return {type: tool, geometry: {x: start.x, y: start.y, width: 0, height: 0}};
             case "mosaic":
@@ -2640,7 +2966,7 @@ export class AnnotEditor {
                     type: tool,
                     geometry: {
                         center: {...start}, tip: null, control: null, number: 0,
-                        radius: Math.max(12, this.current.fontSize * 0.65),
+                        radius: numberRadiusFor(this.current.fontSize),
                         // 拖动预览也要按当前样式画，否则松手前后形状会跳变
                         bubble: this.current.numberBubble,
                         leader: this.current.numberLeader,
@@ -2667,6 +2993,17 @@ export class AnnotEditor {
                 // Shift 与【画线】完全一致：方向吸附到水平 / 垂直 / 45°，长度保持鼠标距离
                 const a = g as ArrowGeometry;
                 a.end = shift ? snapDirection(a.start, current) : {...current};
+                break;
+            }
+            case "measure": {
+                const m = g as MeasureGeometry;
+                if (m.mode === "angle" && m.vertex) {
+                    // 第一条边固定朝右，长度跟着拖动距离走；第二条边实时跟手 → 角度随时可读
+                    const arm = Math.max(60, Math.hypot(current.x - m.vertex.x, current.y - m.vertex.y));
+                    m.start = {x: m.vertex.x + arm, y: m.vertex.y};
+                }
+                // Shift：尺寸线按 15° 一档吸附（水平 / 垂直 / 30° / 45° …）；别的工具仍是 45°
+                m.end = shift ? snapDirectionBy(m.start, current, 15) : {...current};
                 break;
             }
             case "line": {
@@ -2763,6 +3100,13 @@ export class AnnotEditor {
         switch (draft.type) {
             case "arrow":
                 return distance((draft.geometry as ArrowGeometry).start, (draft.geometry as ArrowGeometry).end) >= 8 / this.viewport.zoom;
+            case "measure": {
+                const m = draft.geometry as MeasureGeometry;
+                if (m.mode === "angle" && m.vertex) {
+                    return distance(m.vertex, m.end) >= 6 / this.viewport.zoom;
+                }
+                return distance(m.start, m.end) >= 6 / this.viewport.zoom;
+            }
             case "line": {
                 const l = draft.geometry as LineGeometry;
                 if (l.points.length < 2) return false;
@@ -2826,6 +3170,9 @@ export class AnnotEditor {
     // ---------------------------------------------------------------- 指针交互
     private onPointerDown(e: PointerEvent): void {
         if (e.button !== 0 || !this.svg) return;
+        // 正在改尺寸数值时，点画布先当成「确认」：这里对 pointerdown 调过 preventDefault，
+        // 靠 blur 不可靠，必须手动提交一次
+        if (this.measureEditor && this.measureCommit) this.measureCommit();
         // 这一笔只用来结束文字输入：跳过绘制，但手指照常被舞台记录（双指缩放要用）
         if (e.pointerId === this.swallowPointer) {
             this.swallowPointer = -1;
@@ -2921,6 +3268,11 @@ export class AnnotEditor {
                 }
                 e.preventDefault();
                 this.render();
+                return;
+            }
+            if (handleEl.getAttribute("data-handle") === "edit-measure") {
+                e.preventDefault();
+                if (object.type === "measure") this.beginMeasureTextEdit(object);
                 return;
             }
             const bounds = getBounds(object);
@@ -3178,6 +3530,11 @@ export class AnnotEditor {
             if (distance(p, drag.start) * this.viewport.zoom < this.dragSlop) return;
             object.geometry = cloneGeometry(drag.original.geometry);
             translateObject(object, p.x - drag.start.x, p.y - drag.start.y);
+            if (object.type === "measure") {
+                const dbg = object.geometry as MeasureGeometry;
+                console.log("[annotate] 拖动尺寸标注", p.x - drag.start.x, p.y - drag.start.y,
+                    "→ 起点", dbg.start.x, dbg.start.y);
+            }
             // 文字不许被拖出画布左右边界；贴着右边缘时可用宽度变小，行数自动变多
             if (object.type === "text") {
                 const text = object.geometry as TextGeometry;
@@ -3193,7 +3550,24 @@ export class AnnotEditor {
             object.geometry = cloneGeometry(drag.original.geometry);
             object.style = {...drag.original.style};
             const name = drag.handle;
-            if (name === "start" || name === "end" || name === "curve") {
+            if (object.type === "measure" && (name === "tickUp" || name === "tickDown")) {
+                // 界线拉长：按指针在法线方向的投影算长度；
+                // 两个长度是对象级字段，所以拖左边右边也会同步跟着变
+                const m = object.geometry as MeasureGeometry;
+                const len = Math.hypot(m.end.x - m.start.x, m.end.y - m.start.y) || 1;
+                const nx = -(m.end.y - m.start.y) / len;
+                const ny = (m.end.x - m.start.x) / len;
+                const mid = {x: (m.start.x + m.end.x) / 2, y: (m.start.y + m.end.y) / 2};
+                const proj = (p.x - mid.x) * nx + (p.y - mid.y) * ny;
+                if (name === "tickDown") object.style.measureTickDown = Math.max(0, proj);
+                else object.style.measureTickUp = Math.max(0, -proj);
+            } else if (object.type === "measure" && (name === "start" || name === "end" || name === "vertex")) {
+                // 尺寸标注：拖端点改长度、拖顶点改角度，数值在渲染时按新坐标重算
+                const m = object.geometry as MeasureGeometry;
+                if (name === "start") m.start = {...p};
+                else if (name === "end") m.end = {...p};
+                else m.vertex = {...p};
+            } else if (name === "start" || name === "end" || name === "curve") {
                 const a = object.geometry as ArrowGeometry;
                 if (name === "start") a.start = {...p};
                 else if (name === "end") a.end = {...p};
@@ -3391,11 +3765,28 @@ export class AnnotEditor {
 
     // ---------------------------------------------------------------- 快捷键
     private onKeyDown(e: KeyboardEvent): void {
-        // 输入框 / 滑块 / 下拉框内的按键交给控件自己处理。
-        // 尤其文字编辑态的 Esc 要由 textarea 监听提交，不能被全局捕获抢走。
-        if (this.isTyping(e.target)) return;
         const mod = e.ctrlKey || e.metaKey;
         const key = (e.key || "").toLowerCase();
+        // 🚨 撤销/重做键永远由插件接管，**哪怕焦点在插件内的数字输入框里**。
+        // 宿主的撤销会把「插入图片」那一步也撤掉，整块图直接消失 ——
+        // Windows 早期就是栽在这里：焦点一进输入框，事件漏给宿主，图就没了。
+        // Linux / 部分键盘布局下 e.key 可能是别的字符，用物理键位 code 再兜一次
+        const isUndoKey = key === "z" || key === "y" || e.code === "KeyZ" || e.code === "KeyY";
+        if (mod && isUndoKey && !e.isComposing) {
+            const redoKey = key === "y" || e.code === "KeyY";
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            // 不判断焦点：不管光标在画布上还是在字号框里，撤销键一律只动标注。
+            // （参考项目就是这么做的 —— 一旦"焦点在输入框就放行"，事件就漏给思源，
+            //   它会按自己的历史撤掉「插入图片」那一步。）
+            if (e.shiftKey || redoKey) this.redo();
+            else this.undo();
+            return;
+        }
+        // 其余按键：输入框 / 滑块 / 下拉框内的交给控件自己处理。
+        // 尤其文字编辑态的 Esc 要由 textarea 监听提交，不能被全局捕获抢走。
+        if (this.isTyping(e.target)) return;
         // 取色弹窗展开时：Esc 只收弹窗，不切工具、不关窗口
         // 对齐模式开着时，Esc 先退回普通选择，不直接关窗口
         if (this.alignMode && key === "escape") {
@@ -3483,19 +3874,6 @@ export class AnnotEditor {
             }
             return;
         }
-        if (mod && key === "z") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.shiftKey) this.redo();
-            else this.undo();
-            return;
-        }
-        if (mod && key === "y") {
-            e.preventDefault();
-            e.stopPropagation();
-            this.redo();
-            return;
-        }
         const shortcut = (run: () => void): void => {
             e.preventDefault();
             e.stopPropagation();
@@ -3577,6 +3955,8 @@ export class AnnotEditor {
         this.renderToolbar();
         this.renderPresetState();
         if (!this.drag) this.setHovered(this.hoveredId);
+        // 编辑中的输入框跟着画面一起缩放 / 平移
+        if (this.editingTextId) this.textLayout?.();
     }
 
     private render(): void {
@@ -3619,14 +3999,49 @@ export class AnnotEditor {
             case "spotlight": return ["spotlightOpacity"];
             // 放大镜：镜框颜色 / 线宽有用
             case "magnifier": return ["colors", "widths"];
+            // 尺寸：通用外观（颜色 / 粗細 / 线型）+ 顶部的专属气泡
+            case "measure": return ["colors", "widths", "lines"];
             default: return ["colors", "widths", "lines"];
         }
+    }
+
+    /** 移动端顶部栏的尺寸标注控件（追加在所有常规分组之后，保持那条栏单行）：类型 / 单位 / 界线 / 箭头，动作与 PC 完全共用 */
+    private buildMobileMeasureGroup(): string {
+        const picked = this.getObject(this.selectedId);
+        const g = picked?.type === "measure" ? (picked.geometry as MeasureGeometry) : null;
+        const mode = g?.mode ?? (this.current.measureMode ?? "length");
+        const angle = mode === "angle";
+        const unit = angle
+            ? (picked?.style.measureAngleUnit ?? this.current.measureAngleUnit ?? "deg")
+            : (picked?.style.measureUnit ?? this.current.measureUnit ?? "mm");
+        const ticks = picked?.style.measureTicks !== undefined
+            ? picked.style.measureTicks !== false : this.current.measureTicks !== false;
+        const head = picked?.style.arrowHead ?? this.current.arrowHead ?? "none";
+        const unitOptions: Array<[string, string]> = angle
+            ? [["deg", "°"], ["rad", "rad"]]
+            : LENGTH_UNITS.map(([v, t]) => [v, t] as [string, string]);
+        return `<div class="annot-context__chips annot-mobile-measure" role="group" aria-label="尺寸标注">` +
+            [["length", "长度"], ["angle", "角度"]].map(([key, label]) => `
+                <button type="button" class="annot-context__chip${mode === key ? " is-active" : ""}"
+                    data-action="measure-mode" data-value="${key}">${label}</button>`).join("") +
+            `<select class="annot-mobile-measure__unit" data-ctx="measureUnit" aria-label="标注单位">
+                ${unitOptions.map(([v, t]) => `<option value="${v}"${unit === v ? " selected" : ""}>${t}</option>`).join("")}
+            </select>` +
+            (angle ? "" : `
+                <button type="button" class="annot-context__chip${ticks ? " is-active" : ""}"
+                    data-action="measure-ticks">界线</button>` +
+                ARROW_HEADS.map((item) => `
+                    <button type="button" class="annot-context__tool${head === item.key ? " is-active" : ""}"
+                        data-action="measure-head" data-value="${item.key}"
+                        aria-label="${item.label}">${ARROW_HEAD_ICONS[item.key]}</button>`).join("")) +
+            `</div>`;
     }
 
     /** 上栏按钮全部复用 PC 的预设机制（data-preset / data-action），不另做一套状态 */
     private buildMobileStyleGroups(groups: string[]): string {
         const parts: string[] = [];
         if (groups.includes("colors")) {
+            // 底部这条是「通用外观」，所有工具共用同一套颜色，不按工具另做裁剪
             const swatches = this.presets.colors.map((hex) => `
                 <button type="button" class="annot-mobile-swatch" data-preset="color" data-value="${hex}"
                     title="${hex}" aria-label="颜色 ${hex}" style="--annot-swatch-color:${hex}"></button>`).join("");
@@ -3729,6 +4144,8 @@ export class AnnotEditor {
             parts.push(`<div class="annot-mobile-style__group annot-mobile-style__group--hint" data-group="hint">
                 <span class="annot-mobile-style__hint">上栏会跟着当前工具显示颜色、粗细、填充和字号</span></div>`);
         }
+        // 尺寸标注：排在最后，和箭头工具的排布风格一致，不把整条栏顶成两行
+        if (groups.includes("measure")) parts.push(this.buildMobileMeasureGroup());
         return parts.join("");
     }
 
@@ -3747,6 +4164,10 @@ export class AnnotEditor {
      * 键盘一收起，三栏原样回来（类名一摘，CSS 全部还原，不动任何内联样式）。
      */
     private bindMobileKeyboard(): void {
+        /* 🚨 DO NOT MODIFY: 键盘弹起时，工具栏和画布必须保持原有绝对位置，
+           由键盘直接覆盖遮挡，严禁跟随键盘上浮！这是底层交互红线！
+           —— 做法是「锁住弹键盘之前的高度」，让底部三栏自然落到键盘下面；
+           千万不要改成响应 resize 去重排、也不要把三栏挪到键盘上沿。 */
         if (!this.mobile || !this.root) return;
         const viewport = window.visualViewport;
         if (!viewport) return;
@@ -3761,11 +4182,14 @@ export class AnnotEditor {
                 this.mobileViewportBase = Math.max(window.innerHeight, viewport.height);
             }
             const hidden = this.mobileViewportBase - viewport.height;
-            const editing = !!this.editingTextId;
+            // 尺寸数值的输入框不是 textEditor，单独算一个；否则编辑尺寸时键盘判据不成立
+            const measureInput = this.measureEditor?.querySelector("input") ?? null;
+            const editing = !!this.editingTextId || !!measureInput;
             // 判据从「高度差」换成「输入框还握着焦点」：
             // 键盘高度在部分 WebView 里测不准，但「光标还在输入框里」是可靠的 ——
             // 一旦用户收起键盘（输入框失焦）就立刻把三栏放回来，不至于卡在没法操作的状态。
-            const focusedEditor = editing && document.activeElement === this.textEditor;
+            const focusedEditor = editing &&
+                (document.activeElement === this.textEditor || document.activeElement === measureInput);
             const open = focusedEditor || hidden > 120;
             if (open && !this.root.classList.contains("is-keyboard")) {
                 // 锁的是「键盘弹之前」的高度（mobileViewportBase）。
@@ -4185,6 +4609,43 @@ export class AnnotEditor {
             case "line":
                 pushRound(lineRound, "line");
                 break;
+            case "measure": {
+                const mg = picked?.type === "measure" ? (picked.geometry as MeasureGeometry) : null;
+                const mMode = mg?.mode ?? (this.current.measureMode ?? "length");
+                // 长度 / 角度各一颗独立按钮，当前那个高亮
+                items.push({
+                    key: "mLen", label: "长度", icon: MEASURE_LENGTH_ICON,
+                    on: mMode === "length", action: "measure-mode-length", title: "长度标注",
+                });
+                items.push({
+                    key: "mAng", label: "角度", icon: MEASURE_ANGLE_ICON,
+                    on: mMode === "angle", action: "measure-mode-angle", title: "角度标注",
+                });
+                if (mMode === "length") {
+                    const ticksOn = picked?.type === "measure"
+                        ? picked.style.measureTicks !== false : this.current.measureTicks !== false;
+                    items.push({
+                        key: "mTick", label: "界线", icon: MEASURE_TICK_ICON, on: ticksOn,
+                        action: "measure-ticks", title: "尺寸界线开关",
+                    });
+                    items.push({
+                        key: "mHead", label: "箭头",
+                        icon: ARROW_HEAD_ICONS[picked?.style.arrowHead ?? this.current.arrowHead ?? "none"],
+                        title: "箭头样式",
+                    });
+                }
+                // 单位：两种模式都有
+                const unitNow = mMode === "angle"
+                    ? (picked?.style.measureAngleUnit ?? this.current.measureAngleUnit ?? "deg")
+                    : (picked?.style.measureUnit ?? this.current.measureUnit ?? "mm");
+                items.push({
+                    key: "mUnit",
+                    label: unitNow === "um" ? "μm" : unitNow === "deg" ? "°" : unitNow,
+                    icon: MEASURE_UNIT_ICON,
+                    title: "标注单位",
+                });
+                break;
+            }
             case "rect":
                 items.push({
                     key: "corner",
@@ -4266,13 +4727,44 @@ export class AnnotEditor {
                 break;
             }
             case "text": {
-                // 字体挪到顶栏：手机上不再挤在底部第二行里
+                // 文本专属：效果（描边 / 背景）+ 颜色，两个按钮各开一个气泡
+                const tStyle = picked?.type === "text" ? picked.style : null;
+                const textMode: "stroke" | "bg" = tStyle?.textMode === "bg" ? "bg"
+                    : tStyle?.textMode === "stroke" ? "stroke"
+                    : (this.current.textMode === "bg" ? "bg" : "stroke");
+                const activeHex = (textMode === "bg"
+                    ? (tStyle?.textBgColor ?? this.current.textBgColor ?? "#000000")
+                    : (tStyle?.textStrokeColor ?? this.current.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR)).toUpperCase();
+                items.push({
+                    key: "textMode",
+                    label: textMode === "bg" ? "背景" : "描边",
+                    icon: textMode === "bg" ? TEXT_BG_ICON : TEXT_STROKE_ICON,
+                    action: "text-mode-toggle",
+                    title: textMode === "bg" ? "当前：文本背景，点一下换成描边" : "当前：文本描边，点一下换成背景",
+                });
+                items.push({
+                    key: "textColor",
+                    label: activeHex === "#FFFFFF" ? "白" : activeHex === "#000000" ? "黑" : "自定义",
+                    icon: `<span class="annot-mobile-topbar__dot" style="background:${activeHex}"></span>`,
+                    title: "文本的描边色 / 背景色",
+                });
+                // 第三颗：描边宽度 / 背景透明度，点开是一条滑块
+                const sliderKey = textMode === "bg" ? "textBgOpacity" : "textStrokeWidth";
+                const sliderValue = textMode === "bg"
+                    ? Math.round((1 - (tStyle?.textBgOpacity ?? this.current.textBgOpacity ?? 0.75)) * 100)
+                    : Math.round(tStyle?.textStrokeWidth ?? this.current.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
+                items.push({
+                    key: "textFx",
+                    label: textMode === "bg" ? `${sliderValue}%` : `${sliderValue}px`,
+                    icon: WIDTH_ICON,
+                    title: textMode === "bg" ? "背景透明度：0% 实色，100% 全透明" : "描边宽度",
+                });
                 const family = picked?.type === "text" ? picked.style.fontFamily : this.current.fontFamily;
                 const full = fontLabelOf(family);
                 items.push({
                     key: "font",
                     label: full.startsWith("默认") ? "默认" : full.length > 5 ? `${full.slice(0, 4)}…` : full,
-                    icon: `<span class="annot-mobile-topbar__char">字</span>`,
+                    icon: FONT_ICON,
                     on: this.fontPopOpen,
                     action: "font-pop",
                     title: `字体：${full}`,
@@ -4324,6 +4816,24 @@ export class AnnotEditor {
                 data-action="${action}" data-value="${value}" aria-pressed="${on}"
                 title="${disabled ? `${title}（当前类型用不了）` : title}" aria-label="${title}"
                 ${disabled ? "disabled" : ""}>${icon}</button>`;
+        if (key === "mHead") {
+            const head = picked?.style.arrowHead ?? this.current.arrowHead ?? "none";
+            return ARROW_HEADS.map((item) => cell("measure-head", item.key,
+                ARROW_HEAD_ICONS[item.key], item.key === head, item.label)).join("");
+        }
+        if (key === "mUnit") {
+            const mg = picked?.type === "measure" ? (picked.geometry as MeasureGeometry) : null;
+            const mMode = mg?.mode ?? (this.current.measureMode ?? "length");
+            const units = mMode === "angle"
+                ? ([["deg", "度"], ["rad", "弧度"]] as Array<[string, string]>)
+                : LENGTH_UNITS.map(([v, t]) => [v, t] as [string, string]);
+            const currentUnit = mMode === "angle"
+                ? (picked?.style.measureAngleUnit ?? this.current.measureAngleUnit ?? "deg")
+                : (picked?.style.measureUnit ?? this.current.measureUnit ?? "mm");
+            return units.map(([value, label]) => `<span class="annot-mobile-pop__chip${
+                value === currentUnit ? " is-active" : ""}" data-action="measure-unit-pick"
+                data-value="${value}" role="button" tabindex="0">${label}</span>`).join("");
+        }
         if (key === "arrowStyle") {
             // 上下两组：上面四个类型，中间一道细横线，下面是六个端点。
             // 横线是 flex-basis:100% 的元素，自己就占满一行，两组不会挤在一起。
@@ -4368,6 +4878,34 @@ export class AnnotEditor {
                 : this.current.numberBubble;
             return NUMBER_BUBBLES.map((item) => cell("number-bubble", item.key,
                 this.numberStyleIcon(item.key), item.key === active, item.label)).join("");
+        }
+        if (key === "textFx") {
+            const tStyle = picked?.type === "text" ? picked.style : null;
+            const mode = tStyle
+                ? (tStyle.textMode === "bg" ? "bg" : "stroke")
+                : (this.current.textMode === "bg" ? "bg" : "stroke");
+            const bg = mode === "bg";
+            const value = bg
+                ? Math.round((1 - (tStyle?.textBgOpacity ?? this.current.textBgOpacity ?? 0.75)) * 100)
+                : Math.round(tStyle?.textStrokeWidth ?? this.current.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
+            return `<div class="annot-mobile-slider">
+                <span>${bg ? "背景透明度" : "描边宽度"}</span>
+                <input type="range" min="0" max="${bg ? 100 : 12}" step="1" value="${value}"
+                    data-mobile-slider="${bg ? "textBgOpacity" : "textStrokeWidth"}" aria-label="${bg ? "背景透明度" : "描边宽度"}">
+                <b>${value}${bg ? "%" : " px"}</b>
+            </div>`;
+        }
+        if (key === "textColor") {
+            const prop = this.textColorProp();
+            const cur = (picked?.type === "text"
+                ? (prop === "textBgColor" ? picked.style.textBgColor : picked.style.textStrokeColor)
+                : (prop === "textBgColor" ? this.current.textBgColor : this.current.textStrokeColor)) ?? "#FFFFFF";
+            // 与 PC 对齐：只有白 / 黑 / 自定义
+            const pills = ["#FFFFFF", "#000000"];
+            return pills.map((hex) => cell("text-color", hex, `<span class="annot-mobile-topbar__dot" style="background:${hex}"></span>`,
+                hex.toUpperCase() === cur.toUpperCase(), hex === "#FFFFFF" ? "白色" : "黑色")).join("") +
+                cell("mobile-color", "", `<span class="annot-mobile-swatch annot-mobile-swatch--custom"></span>`,
+                    !pills.some((hex) => hex.toUpperCase() === cur.toUpperCase()), "自定义颜色");
         }
         if (key === "numberTip") {
             // 端点三选一已取消，这里直接给端点样式（与箭头工具同一套）
@@ -4438,9 +4976,10 @@ export class AnnotEditor {
                 item.value === undefined ? "" : ` data-value="${item.value}"`}
                 aria-expanded="${item.key === this.mobilePopKey}" title="${item.title}">
                 ${item.icon}<span>${item.label}</span></button>`).join("")
-            + (this.mobilePopKey ? `<div class="annot-mobile-pop" data-role="mobile-pop">${
-                this.mobilePopBody(this.mobilePopKey)}</div>` : "");
-        this.positionMobilePop();
+            ;
+        // 气泡不能放在胶囊里：胶囊宽度=内容宽，气泡比它宽就会被裁/被推偏。
+        // 单独挂到 .annot-root 上，按整屏宽度居中。
+        this.renderMobilePop();
         if (keepScroll) bar.scrollLeft = keepScroll;
     }
 
@@ -4485,25 +5024,57 @@ export class AnnotEditor {
      * 整块会偏到一边，尖角被挤到边缘，看着像「一个矩形外加一块小三角」而不是带尖角的气泡。
      * 现在按按钮中心摆气泡、夹在容器里，尖角再兜个下限，永远长在气泡身上。
      */
+    private renderMobilePop(): void {
+        if (!this.mobile || !this.root) return;
+        this.root.querySelector('[data-role="mobile-pop"]')?.remove();
+        if (!this.mobilePopKey) return;
+        const pop = document.createElement("div");
+        pop.className = "annot-mobile-pop";
+        pop.dataset.role = "mobile-pop";
+        pop.innerHTML = this.mobilePopBody(this.mobilePopKey);
+        this.root.append(pop);
+        this.positionMobilePop();
+    }
+
     private positionMobilePop(): void {
         const pop = this.root?.querySelector<HTMLElement>('[data-role="mobile-pop"]');
         const btn = this.root?.querySelector<HTMLElement>(".annot-mobile-topbar__btn.is-open");
-        if (!pop || !btn) return;
+        if (!pop || !this.root) return;
+        // 水平居中交给 CSS（left:50% + translateX(-50%)）：JS 不再写 left，
+        // 免得"刚挂上还没布局、量到的宽度是 0"把位置算偏
+        const rootBox = this.root.getBoundingClientRect();
         const popBox = pop.getBoundingClientRect();
-        const btnBox = btn.getBoundingClientRect();
-        if (!popBox.width) return;
-        const host = (pop.offsetParent as HTMLElement | null) ?? this.root;
-        if (!host) return;
-        const hostBox = host.getBoundingClientRect();
-        const center = btnBox.left + btnBox.width / 2 - hostBox.left;
+        const width = popBox.width || Math.min(320, rootBox.width - 24);
         const margin = 10;
-        let left = center - popBox.width / 2;
-        left = Math.max(margin, Math.min(left, hostBox.width - popBox.width - margin));
-        pop.style.left = `${Math.round(left)}px`;
+        const left = Math.max(margin, Math.min((rootBox.width - width) / 2, rootBox.width - width - margin));
+        const bar = this.root.querySelector<HTMLElement>('[data-role="mobile-topbar"]');
+        const top = bar ? bar.getBoundingClientRect().bottom - rootBox.top + 9 : 56;
+        pop.style.top = `${Math.round(top)}px`;
+        pop.style.maxWidth = `${Math.round(rootBox.width - margin * 2)}px`;
         pop.style.transform = "none";
         // 气泡被夹到边上时尖角会顶出圆角，留 18px 兜住
-        const tip = Math.max(18, Math.min(popBox.width - 18, center - left));
+        const centerX = btn
+            ? btn.getBoundingClientRect().left + btn.getBoundingClientRect().width / 2 - rootBox.left
+            : rootBox.width / 2;
+        const tip = Math.max(18, Math.min(width - 18, centerX - left));
         pop.style.setProperty("--tip-x", `${Math.round(tip)}px`);
+
+        // 气泡里的滑块（描边宽度 / 背景透明度）：拖动即时预览，松手才记一步历史
+        const slider = pop.querySelector<HTMLInputElement>("[data-mobile-slider]");
+        if (slider && !slider.dataset.bound) {
+            slider.dataset.bound = "1";
+            const apply = (commit: boolean): void => {
+                const key = slider.dataset.mobileSlider;
+                if (!key) return;
+                const raw = Number(slider.value);
+                const value = key === "textBgOpacity" ? 1 - raw / 100 : raw;
+                this.applyProperty({[key]: value} as PropertyPatch, commit);
+                const out = pop.querySelector<HTMLElement>(".annot-mobile-slider b");
+                if (out) out.textContent = key === "textBgOpacity" ? `${raw}%` : `${raw} px`;
+            };
+            slider.addEventListener("input", () => apply(false));
+            slider.addEventListener("change", () => apply(true));
+        }
     }
 
     /** 多选时的上栏：已选数量 + 8 颗对齐 / 分布按钮（图标与 PC 同一套原稿） */
@@ -4851,6 +5422,9 @@ export class AnnotEditor {
         // 属性名与工具栏的 data-tool 区分开，避免任何选择器把画布当成工具按钮
         this.svg?.setAttribute("data-active-tool", this.activeTool);
         this.root.classList.toggle("is-cropping", this.cropMode);
+        // 顶栏重画时把当前样式落盘（内部 150ms 节流）：
+        // 下拉框、气泡、预设档位这些不经过 commit 的改动也就能记住了。
+        saveCurrentStyle(this.current);
 
         this.updateHint();
     }
@@ -5338,7 +5912,8 @@ export class AnnotEditor {
     /** 弹窗骨架：色轮 + （改当前颜色时）保存按钮与颜色预设 */
     private colorPopMarkup(target: Exclude<ColorPopTarget, null>): string {
         const title = target.kind === "prop"
-            ? (target.prop === "textStrokeColor" ? "文字描边颜色" : "对象颜色")
+            ? (target.prop === "textStrokeColor" ? "文本描边颜色"
+                : target.prop === "textBgColor" ? "文本背景颜色" : "对象颜色")
             : target.kind === "extend-bg" ? "画布底色" : "自定义颜色";
         const withSaved = target.kind === "current";
         return `
@@ -5577,7 +6152,7 @@ export class AnnotEditor {
         object.style.fontSize = size;
         if (object.type === "text") (object.geometry as TextGeometry).fontSize = size;
         if (object.type === "number") {
-            (object.geometry as NumberGeometry).radius = Math.max(12, size * 0.65);
+            (object.geometry as NumberGeometry).radius = numberRadiusFor(size);
         }
     }
 
@@ -5850,7 +6425,7 @@ export class AnnotEditor {
         this.themePreference = preference;
         applyTheme(this.root, preference);
         try {
-            localStorage.setItem(THEME_STORAGE_KEY, preference);
+            writeItem(THEME_STORAGE_KEY, preference);
         } catch {
             // 隐私模式下忽略
         }
@@ -6055,16 +6630,22 @@ export class AnnotEditor {
 
     private renderContextBar(): void {
         const bar = this.root?.querySelector<HTMLElement>('[data-role="context-bar"]');
+        // 移动端只有尺寸标注允许在画面顶部显示这条悬浮窗（其它工具仍用底部参数栏）
+        const measureActive = (this.getObject(this.selectedId)?.type ?? this.activeTool) === "measure";
+        bar?.classList.toggle("is-measure", measureActive);
         if (!bar) return;
-        // 手机端只用上下双栏，不显示 PC 的悬浮条
+        // 手机端只用上下双栏 + 顶部气泡（mobile-topbar），PC 这条悬浮栏一律不出现
         if (this.mobile) { bar.hidden = true; return; }
-        const selected = this.getObject(this.selectedId);
+        // 正在打字的那段文字也要算「选中」，否则编辑期间悬浮栏会退回成通用参数
+        const selected = this.getObject(this.selectedId) ?? this.getObject(this.editingTextId);
         // 平移工具不显示任何对象参数，只提示怎么用
         const type: string = this.activeTool === "pan"
             ? ""
             : (selected?.type ?? (this.activeTool === "select" ? "" : this.activeTool));
         // 最左侧两个常驻按钮：选择 / 平移。其它参数一律排在它们右边。
-        const base = `<div class="annot-context__base" role="group" aria-label="基础工具">` +
+        const base = this.mobile
+            ? ""
+            : `<div class="annot-context__base" role="group" aria-label="基础工具">` +
             CONTEXT_TOOLS.map((item) => `
                 <button type="button" class="annot-context__tool${this.activeTool === item.tool ? " is-active" : ""}"
                     data-tool="${item.tool}" title="${item.title}" aria-label="${item.label}"
@@ -6082,14 +6663,14 @@ export class AnnotEditor {
                     data-value="${item.op}" title="${item.hint}" aria-label="${item.label}">${item.icon}</button>`).join("") +
             `</div>`
             : "";
-        const range = (key: string, label: string, min: number, max: number, value: number, unit = "") => `
-            <label class="annot-context__item"><span>${label}</span>
-                <input type="range" data-ctx="${key}" min="${min}" max="${max}" value="${value}">
-                <b data-role="ctx-${key}">${value}${unit}</b></label>`;
         // 马赛克 / 模糊共用：开着的时候点一下画面，就能自动贴合文字或物体的轮廓
         const smartChip = `<button type="button" class="annot-context__chip${this.current.smartSelect ? " is-active" : ""}"
             data-action="smart-select" aria-pressed="${this.current.smartSelect}"
             title="选区识别：开启后点一下画面上的文字或物体，自动贴合它的轮廓">选区识别</button>`;
+        const range = (key: string, label: string, min: number, max: number, value: number, unit = "") => `
+            <label class="annot-context__item"><span>${label}</span>
+                <input type="range" data-ctx="${key}" min="${min}" max="${max}" value="${value}">
+                <b data-role="ctx-${key}">${value}${unit}</b></label>`;
         let html = "";
         if (this.activeTool === "pan") {
             // 平移只是挪视线，没有任何参数可调：保持和「选择」一样，只留两颗常驻按钮
@@ -6105,10 +6686,86 @@ export class AnnotEditor {
                         aria-pressed="${item.key === mode}">${item.label}</button>`).join("") +
                 `</div>`;
         } else if (type === "text") {
-            // 字体：点开是面板——顶上一个醒目上传按钮，下面依次是自定义字体、系统字体
+            // 文本：先选「描边 / 背景」，再选颜色，最后是按模式变化的那根滑块
             const pickedText = selected?.type === "text" ? selected : null;
-            html = `<span class="annot-context__title">文字</span>` +
+            const tStyle = pickedText?.style ?? null;
+            // 对象自己没写过模式（老图或刚新建）时，跟随工具栏记住的那一档，
+            // 不要一律当成描边 —— 那等于每次都把用户的切换抹掉
+            const mode: "stroke" | "bg" = tStyle?.textMode === "bg" ? "bg"
+                : tStyle?.textMode === "stroke" ? "stroke"
+                : (this.current.textMode === "bg" ? "bg" : "stroke");
+            const strokeColor = tStyle?.textStrokeColor ?? this.current.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR;
+            const bgColor = tStyle?.textBgColor ?? this.current.textBgColor ?? "#000000";
+            const strokeWidth = Math.round(tStyle?.textStrokeWidth ?? this.current.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
+            const bgOpacity = tStyle?.textBgOpacity ?? this.current.textBgOpacity ?? 0.75;
+            const activeColor = (mode === "bg" ? bgColor : strokeColor).toUpperCase();
+            const isWhite = activeColor === "#FFFFFF";
+            const isBlack = activeColor === "#000000";
+            const modeChips = `<div class="annot-context__chips" role="group" aria-label="文本效果">` +
+                TEXT_MODES.map((item) => `
+                    <button type="button" class="annot-context__chip${mode === item.key ? " is-active" : ""}"
+                        data-action="text-mode" data-value="${item.key}" title="${item.hint}"
+                        aria-pressed="${mode === item.key}">${item.label}</button>`).join("") +
+                `</div>`;
+            const colorChips = `<div class="annot-context__chips annot-context__chips--text-colors" role="group" aria-label="文本颜色">` +
+                `<button type="button" class="annot-swatch annot-swatch--flat${isWhite ? " is-active" : ""}"
+                    data-action="text-color" data-value="#FFFFFF" title="白色"
+                    style="background:#FFFFFF"></button>` +
+                `<button type="button" class="annot-swatch annot-swatch--flat${isBlack ? " is-active" : ""}"
+                    data-action="text-color" data-value="#000000" title="黑色"
+                    style="background:#000000"></button>` +
+                `<button type="button" class="annot-swatch annot-swatch--custom${(!isWhite && !isBlack) ? " is-active" : ""}"
+                    data-action="text-color-custom" title="自定义颜色"
+                    style="background:${(!isWhite && !isBlack) ? activeColor : "conic-gradient(#F87171,#FBBF24,#34D399,#38BDF8,#A78BFA,#F87171)"}"></button>` +
+                `</div>`;
+            const slider = mode === "bg"
+                ? range("textBgOpacity", "背景透明度", 0, 100, Math.round((1 - bgOpacity) * 100), "%")
+                : range("textStrokeWidth", "描边宽度", 0, 12, strokeWidth);
+            // 字体入口放最末，与原来的位置一致
+            html = `<span class="annot-context__title">文本</span>` +
+                modeChips + colorChips + slider +
                 this.fontTriggerHtml(pickedText ? pickedText.style.fontFamily : this.current.fontFamily, false);
+        } else if (type === "measure") {
+            const picked = selected?.type === "measure" ? selected : null;
+            const mode = picked ? (picked.geometry as MeasureGeometry).mode : (this.current.measureMode ?? "length");
+            const unit = mode === "angle"
+                ? (picked?.style.measureAngleUnit ?? this.current.measureAngleUnit ?? "deg")
+                : (picked?.style.measureUnit ?? this.current.measureUnit ?? "mm");
+            const showTicks = picked ? picked.style.measureTicks !== false : this.current.measureTicks !== false;
+            const headMode = picked?.style.measureHeadMode ?? this.current.measureHeadMode ?? "none";
+            const head = picked?.style.arrowHead ?? this.current.arrowHead ?? "none";
+            // 长度按 snow-shot 的单排顺序；角度只有两种
+            const unitOptions: Array<[string, string]> = mode === "angle"
+                ? [["deg", "度 °"], ["rad", "弧度 rad"]]
+                : LENGTH_UNITS.map(([v, t]) => [v, t] as [string, string]);
+            // 界线与箭头只对长度标注有意义，角度模式一律不显示
+            const lengthOnly = mode === "length"
+                ? `<div class="annot-context__chips" role="group" aria-label="尺寸界线">` +
+                    `<button type="button" class="annot-context__chip${showTicks ? " is-active" : ""}"
+                        data-action="measure-ticks" aria-pressed="${showTicks}"
+                        title="尺寸界线：在测量线两端各画一道垂直短线，端点可拖动改长短">尺寸界线</button>` +
+                    `</div>` +
+                    // 箭头：直接照搬箭头工具那一排图形按钮（无箭头 / 基础 / 燕尾 / 开放 / 菱形 / 圆形）
+                    `<div class="annot-context__chips annot-context__chips--heads" role="group" aria-label="箭头样式">` +
+                    ARROW_HEADS.map((item) => `
+                        <button type="button" class="annot-context__tool${head === item.key ? " is-active" : ""}"
+                            data-action="measure-head" data-value="${item.key}"
+                            title="${item.label}：${item.hint}" aria-label="${item.label}"
+                            aria-pressed="${head === item.key}">${ARROW_HEAD_ICONS[item.key]}</button>`).join("") +
+                    `</div>`
+                : "";
+            html = `<span class="annot-context__title">尺寸</span>` +
+                `<div class="annot-context__chips" role="group" aria-label="标注类型">` +
+                [["length", "长度"], ["angle", "角度"]].map(([key, label]) => `
+                    <button type="button" class="annot-context__chip${mode === key ? " is-active" : ""}"
+                        data-action="measure-mode" data-value="${key}"
+                        aria-pressed="${mode === key}">${label}</button>`).join("") +
+                `</div>` + lengthOnly +
+                `<label class="annot-context__item"><span>单位</span>
+                    <select data-ctx="measureUnit" aria-label="标注单位">
+                        ${unitOptions.map(([v, t]) =>
+                            `<option value="${v}"${unit === v ? " selected" : ""}>${t}</option>`).join("")}
+                    </select></label>`;
         } else if (type === "mosaic") {
             const size = selected ? (selected.geometry as MosaicGeometry).blockSize : this.contextDefaults.blockSize;
             // 透明度对马赛克意义不大（它本来就是盖住内容），PC 悬浮条只留块大小
@@ -6983,6 +7640,147 @@ export class AnnotEditor {
     }
 
     /** 序号引线用哪种箭头样式（单头 / 双头 / 线条……），与箭头工具同一套 */
+    /** 把当前对象的文本外观同步到正在编辑的输入框（描边 / 颜色） */
+    private syncTextEditorLook(): void {
+        const editor = this.textEditor;
+        const object = this.getObject(this.editingTextId);
+        if (!editor || !object || object.type !== "text") return;
+        editor.style.color = object.style.color;
+        const bgMode = object.style.textMode === "bg";
+        const width = Math.max(0, object.style.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
+        if (!bgMode && object.style.textStrokeEnabled !== false && width > 0) {
+            editor.style.webkitTextStroke = `${Math.max(0.5, width * (this.viewport.zoom || 1))}px ${
+                object.style.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR}`;
+            editor.style.setProperty("paint-order", "stroke fill");
+        } else {
+            editor.style.webkitTextStroke = "";
+            editor.style.paintOrder = "";
+        }
+    }
+
+    /** 尺寸标注的自动数值（双击编辑时作为初始内容） */
+    private measureAutoText(object: AnnotObject): string {
+        const g = object.geometry as MeasureGeometry;
+        const unit = object.style.measureUnit ?? "px";
+        if (g.mode === "angle" && g.vertex) {
+            return formatAngle(angleAt(g.vertex, g.start, g.end), unit);
+        }
+        return formatMeasure(Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y), unit);
+    }
+
+    /** 数值与单位后缀：编辑时只让改数值，单位单独显示在旁边 */
+    private measureParts(object: AnnotObject): {value: string; suffix: string} {
+        const g = object.geometry as MeasureGeometry;
+        const angle = g.mode === "angle" && Boolean(g.vertex);
+        const unit = angle
+            ? (object.style.measureAngleUnit ?? "deg")
+            : (object.style.measureUnit ?? "mm");
+        const raw = object.style.measureText;
+        if (raw) {
+            // 用户改过：拆成「数字 + 自定义尾巴」，尾巴里的旧单位要剥掉，
+            // 这样切单位时只换单位、不动用户写的数值和公差。
+            const match = raw.match(/^(-?\d+(?:\.\d+)?)(.*)$/);
+            if (match) {
+                let tail = match[2] || "";
+                const known = ["mm", "cm", "km", "μm", "um", "px", "pt", "in", "ft", "m", "°", "deg", "rad"];
+                const trimmed = tail.trim();
+                for (const sfx of known) {
+                    if (trimmed.endsWith(sfx)) {
+                        tail = trimmed.slice(0, -sfx.length);
+                        break;
+                    }
+                }
+                return {value: match[1], suffix: tail + measureSuffix(unit)};
+            }
+            return {value: "", suffix: ` ${raw}`};
+        }
+        if (angle) {
+            return {value: (angleAt(g.vertex!, g.start, g.end)).toFixed(1), suffix: measureSuffix(unit)};
+        }
+        return {
+            value: measureNumberText(Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y), unit),
+            suffix: measureSuffix(unit),
+        };
+    }
+
+    /** 双击数值：就地弹一个输入框，确认后写进 style.measureText */
+    private beginMeasureTextEdit(object: AnnotObject): void {
+        if (object.type !== "measure" || !this.stage) return;
+        this.finishMeasureTextEdit();
+        const g = object.geometry as MeasureGeometry;
+        const fontSize = Math.max(10, object.style.fontSize ?? 14);
+        const at = this.imageToScreen(measureLabelPoint(g, fontSize));
+        const parts = this.measureParts(object);
+        const wrap = document.createElement("div");
+        wrap.className = "annot-measure-editor";
+        wrap.style.left = `${at.x}px`;
+        wrap.style.top = `${at.y}px`;
+        wrap.style.fontSize = `${fontSize * (this.viewport.zoom || 1)}px`;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = parts.value;
+        const suffix = document.createElement("span");
+        suffix.textContent = parts.suffix;
+        wrap.append(input, suffix);
+        this.stage.append(wrap);
+        this.measureEditor = wrap;
+        this.measureEditingId = object.id;
+        input.focus();
+        input.select();
+        // 🚨 红线逻辑：此处绝对不能因为键盘弹起而重算高度或改变 bottom 属性，
+        // 键盘必须直接遮挡工具栏 —— 所以只在此时「锁一次布局」，之后不再跟随键盘
+        this.keyboardSync?.();
+        const commit = (): void => {
+            const numeric = input.value.trim();
+            if (!numeric) {
+                // 清空 = 回到自动计算
+                object.style.measureText = undefined;
+            } else {
+                object.style.measureText = `${numeric}${suffix.textContent ?? ""}`;
+            }
+            this.finishMeasureTextEdit();
+            this.commit();
+            this.render();
+        };
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                commit();
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                this.finishMeasureTextEdit();
+                this.render();
+            }
+        });
+        input.addEventListener("blur", commit);
+        this.measureCommit = commit;
+    }
+
+    private finishMeasureTextEdit(): void {
+        if (!this.measureEditor) return;
+        this.measureEditor.remove();
+        this.measureEditor = null;
+        this.measureEditingId = null;
+        this.measureCommit = null;
+    }
+
+    /** 尺寸界线当前是否开着（选中对象优先，否则用默认值） */
+    private measureTicksOn(): boolean {
+        const picked = this.getObject(this.selectedId);
+        return picked?.type === "measure" ? picked.style.measureTicks !== false : this.current.measureTicks !== false;
+    }
+
+    /** 当前文本模式对应的颜色字段：描边色 / 背景色 */
+    private textColorProp(): "textStrokeColor" | "textBgColor" {
+        const picked = this.getObject(this.selectedId) ?? this.getObject(this.editingTextId);
+        const mode = picked?.type === "text"
+            ? (picked.style.textMode === "bg" ? "bg" : "stroke")
+            : (this.current.textMode === "bg" ? "bg" : "stroke");
+        return mode === "bg" ? "textBgColor" : "textStrokeColor";
+    }
+
     /** 序号引线的箭头端点：与箭头工具的「样式」同一套（基础 / 燕尾 / 开放 / 菱形 / 圆形） */
     private setNumberArrowHead(head: ArrowHead): void {
         const key = normalizeArrowHead(head);
@@ -7055,13 +7853,19 @@ export class AnnotEditor {
             return;
         }
         const badge = this.root?.querySelector<HTMLElement>(`[data-role="ctx-${key}"]`);
-        if (badge) badge.textContent = `${value}${key === "opacity" ? "%" : ""}`;
+        if (badge) badge.textContent = key === "opacity" || key === "textBgOpacity"
+            ? `${Math.round(value)}%`
+            : key === "textStrokeWidth" ? `${Math.round(value)} px` : String(Math.round(value));
         // 手机属性栏的读数（块大小 / 模糊程度）跟 PC 共用同一套 data-ctx，读数单独一份
         const mobileBadge = this.root?.querySelector<HTMLElement>(`[data-role="m-${key}"]`);
         if (mobileBadge) mobileBadge.textContent = String(Math.round(value));
         const object = this.getObject(this.selectedId);
         if (!object) return;
         const patch: PropertyPatch = {};
+        // 文本的两个滑块：描边宽度直接是像素，背景透明度是 0~100 的百分比
+        if (key === "textStrokeWidth") patch.textStrokeWidth = value;
+        // 滑块标的是「透明度」：0% 实色、100% 全透明，存进样式时换成不透明度
+        if (key === "textBgOpacity") patch.textBgOpacity = 1 - value / 100;
         if (key === "blockSize" && object.type === "mosaic") patch.blockSize = value;
         if (key === "blurRadius" && object.type === "blur") patch.blurRadius = value;
         if (key === "opacity") patch.opacity = value / 100;

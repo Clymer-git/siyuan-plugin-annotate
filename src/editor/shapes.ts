@@ -15,6 +15,7 @@ import {
     svgEl, arrowBounds, midpoint, cloneArrow,
 } from "./geometry";
 import {arrowShape, arrowTipMiterInset, arrowShaftPath} from "./arrowGeometry";
+import {angleAt, formatAngle, formatMeasure, measureLabelPoint, measureTextWithUnit, type MeasureUnit} from "./measure";
 import {numberHeadOf, resolveArrowKind} from "./arrowStyles";
 import {formatNumber, numberTextScale} from "./numberFormat";
 import {normalizeNumberTip, type NumberTipKey} from "./numberTip";
@@ -28,7 +29,7 @@ import {
     TYPE_LABELS,
     type AnnotStyle, type AnnotObject, type AnnotType, type ArrowGeometry, type ArrowStyleKey, type EllipseGeometry,
     type Geometry, type HighlightGeometry, type LineGeometry, type MosaicGeometry,
-    type MagnifierGeometry, type NumberGeometry, type Point, type RectGeometry,
+    type MagnifierGeometry, type MeasureGeometry, type NumberGeometry, type Point, type RectGeometry,
     type SpotlightGeometry, type TextGeometry,
 } from "../types";
 
@@ -76,6 +77,64 @@ export function textWidth(text: string, fontSize: number): number {
     return Math.max(fontSize * 2, measureText(text, fontSize));
 }
 
+
+/** 尺寸标注的端点箭头：样式复用箭头工具那套（基础 / 燕尾 / 开放 / 菱形 / 圆形） */
+function measureHead(tip: Point, dir: Point, head: string, size: number, color: string,
+                     stroke: number, zoom: number): SVGElement[] {
+    const ang = Math.atan2(dir.y, dir.x);
+    const at = (offset: number, spread: number): Point => ({
+        x: tip.x - Math.cos(ang) * offset + Math.cos(ang + Math.PI / 2) * spread,
+        y: tip.y - Math.sin(ang) * offset + Math.sin(ang + Math.PI / 2) * spread,
+    });
+    const base = at(size, 0);
+    const half = size * 0.52;
+    switch (head) {
+        case "none":
+            return [];
+        case "open": {
+            const a = at(size, half);
+            const b = at(size, -half);
+            return [svgEl("path", {
+                d: `M ${a.x} ${a.y} L ${tip.x} ${tip.y} L ${b.x} ${b.y}`,
+                fill: "none", stroke: color, "stroke-width": stroke,
+                "stroke-linejoin": "round", "stroke-linecap": "round",
+                "pointer-events": "none", class: "annot-shape",
+            })];
+        }
+        case "circle":
+            return [svgEl("circle", {
+                cx: at(size * 0.55, 0).x, cy: at(size * 0.55, 0).y, r: size * 0.42,
+                fill: color, "pointer-events": "none", class: "annot-shape",
+            })];
+        case "diamond": {
+            const a = at(size * 1.5, 0);
+            const b = at(size * 0.75, half);
+            const c = at(size * 0.75, -half);
+            return [svgEl("path", {
+                d: `M ${tip.x} ${tip.y} L ${b.x} ${b.y} L ${a.x} ${a.y} L ${c.x} ${c.y} Z`,
+                fill: color, "pointer-events": "none", class: "annot-shape",
+            })];
+        }
+        case "tail": {
+            const a = at(size, half);
+            const b = at(size, -half);
+            const notch = at(size * 0.55, 0);
+            return [svgEl("path", {
+                d: `M ${a.x} ${a.y} L ${tip.x} ${tip.y} L ${b.x} ${b.y} L ${notch.x} ${notch.y} Z`,
+                fill: color, "pointer-events": "none", class: "annot-shape",
+            })];
+        }
+        default: {
+            const a = at(size, half);
+            const b = at(size, -half);
+            return [svgEl("path", {
+                d: `M ${tip.x} ${tip.y} L ${a.x} ${a.y} L ${b.x} ${b.y} Z`,
+                fill: color, "pointer-events": "none", class: "annot-shape",
+            })];
+        }
+    }
+}
+
 export function getBounds(object: AnnotObject): Bounds {
     const g = object.geometry;
     switch (object.type) {
@@ -83,7 +142,23 @@ export function getBounds(object: AnnotObject): Bounds {
         case "highlightRect":
         case "mosaic":
         case "blur":
-        case "spotlight":
+        case "spotlight": {
+            const r = g as RectGeometry;
+            return {x: r.x, y: r.y, width: Math.abs(r.width), height: Math.abs(r.height)};
+        }
+        case "measure": {
+            // 尺寸标注的包围盒按端点（角度再加顶点）算，外扩一点兜住竖线和数值底板
+            const m = g as MeasureGeometry;
+            const pts = m.mode === "angle" && m.vertex ? [m.start, m.vertex, m.end] : [m.start, m.end];
+            const xs = pts.map((pt) => pt.x);
+            const ys = pts.map((pt) => pt.y);
+            const pad = 26;
+            return {
+                x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
+                width: Math.max(...xs) - Math.min(...xs) + pad * 2,
+                height: Math.max(...ys) - Math.min(...ys) + pad * 2,
+            };
+        }
         case "magnifier": {
             const r = g as RectGeometry;
             return {x: r.x, y: r.y, width: Math.abs(r.width), height: Math.abs(r.height)};
@@ -156,6 +231,15 @@ export function translateObject(object: AnnotObject, dx: number, dy: number): vo
             const r = g as RectGeometry;
             r.x += dx;
             r.y += dy;
+            break;
+        }
+        case "measure": {
+            // 尺寸标注是纯点坐标堆出来的：三个点全挪，线和字才跟着走
+            // （之前漏了这一支，translateObject 对它什么都没做，所以拖了不动）
+            const m = g as MeasureGeometry;
+            m.start = move(m.start);
+            m.end = move(m.end);
+            if (m.vertex) m.vertex = move(m.vertex);
             break;
         }
         case "magnifier": {
@@ -395,6 +479,14 @@ function numberLeader(
  *
  * 尖头长度：没有引线时跟着拖动距离走；有引线时封顶在 1.9R，多出来的部分交给细引线。
  */
+/**
+ * 序号的圆半径：拖拽预览和落库后必须用同一个公式，
+ * 否则松手会突然放大。字号变小时保底 12，保证数字还装得下。
+ */
+export function numberRadiusFor(fontSize: number): number {
+    return Math.max(12, fontSize * 0.8);
+}
+
 function pointerBubble(n: NumberGeometry, style: AnnotStyle, color: string, lineWidth: number): SVGElement[] {
     const target = n.tip;
     const radius = n.radius;
@@ -561,9 +653,25 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
                 x: bounds.x - 4, y: bounds.y - 2, width: bounds.width + 8, height: bounds.height + 4,
                 fill: withAlpha("#FFFFFF", 0.001), "pointer-events": "none",
             }));
+            // 文本的两种托底方式：描边（外沿一圈实线）与背景（半透明圆角色块）。
+            // 背景铺在文字下面，先画，文字压在上面。
+            const textMode = object.style.textMode === "bg" ? "bg" : "stroke";
+            if (textMode === "bg") {
+                const padX = t.fontSize * 0.26;
+                const padY = t.fontSize * 0.16;
+                const radius = Math.min(t.fontSize * 0.34, (bounds.height + padY * 2) / 2);
+                visuals.push(svgEl("rect", {
+                    x: bounds.x - padX, y: bounds.y - padY,
+                    width: bounds.width + padX * 2, height: bounds.height + padY * 2,
+                    rx: radius, ry: radius,
+                    fill: withAlpha(object.style.textBgColor ?? "#000000",
+                        Math.max(0, Math.min(1, object.style.textBgOpacity ?? 0.75))),
+                    "pointer-events": "none", class: "annot-shape annot-text-bg",
+                }));
+            }
             // 文字描边：默认开启、白色、2px。paint-order="stroke" 让描边先画、
             // 填充后画，于是白边只出现在字形外沿，字芯仍是原本的颜色，不会糊。
-            const strokeEnabled = object.style.textStrokeEnabled !== false;
+            const strokeEnabled = textMode === "stroke" && object.style.textStrokeEnabled !== false;
             const strokeColor = object.style.textStrokeColor ?? DEFAULT_TEXT_STROKE_COLOR;
             const strokeWidth = Math.max(0, object.style.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);
             // 文字换行：一行一个 tspan，每行都从文字左边重新起排
@@ -595,6 +703,150 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
                 });
             }
             visuals.push(textNode);
+            break;
+        }
+        case "measure": {
+            const g = object.geometry as MeasureGeometry;
+            const angleMode = g.mode === "angle" && Boolean(g.vertex);
+            const unit = (angleMode
+                ? (object.style.measureAngleUnit ?? "deg")
+                : (object.style.measureUnit ?? "mm")) as MeasureUnit;
+            const stroke = Math.max(1, object.style.lineWidth || 1.5);
+            const fontSize = Math.max(10, object.style.fontSize ?? 14);
+            group.append(hitRect(bounds, zoom));
+
+            // 数值底板：文字始终水平、居中、压在测量线中点；
+            // 用「先量宽再断开主线」的办法，保证没有线条从字里穿过去
+            const drawChip = (text: string, at: Point, gap = true) => {
+                const w = text.length * fontSize * 0.62;
+                const padX = fontSize * 0.45;
+                // 高度单独给：上下各留 0.35 字号（比左右的 0.45 略少，但不再贴边）
+                const h = fontSize * 1.7;
+                visuals.push(svgEl("rect", {
+                    x: at.x - w / 2 - padX, y: at.y - h / 2, width: w + padX * 2, height: h,
+                    rx: h * 0.3, ry: h * 0.3,
+                    // 底板与描边都不透明：底图再花也能一眼读出数字
+                    fill: "#0B1220",
+                    stroke: color, "stroke-width": Math.max(1, stroke * 0.9),
+                    "pointer-events": "none", class: "annot-shape",
+                }));
+                const label = svgEl("text", {
+                    x: at.x, y: at.y + fontSize * 0.36,
+                    "text-anchor": "middle", fill: "#FFFFFF",
+                    "font-size": fontSize, "font-family": fontStackOf(object.style.fontFamily),
+                    "font-weight": "600", "pointer-events": "none", class: "annot-shape annot-measure-label",
+                });
+                label.textContent = text;
+                visuals.push(label);
+                return gap ? w / 2 + padX + fontSize * 0.3 : 0;
+            };
+            const autoText = g.mode === "angle" && g.vertex
+                ? formatAngle(angleAt(g.vertex, g.start, g.end), unit)
+                : formatMeasure(Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y), unit);
+            // 双击改过文字：数值与自定义尾巴保留，单位始终按当前设置拼
+            const text = measureTextWithUnit(object.style.measureText, autoText, unit);
+
+            if (g.mode === "angle" && g.vertex) {
+                const v = g.vertex;
+                for (const target of [g.start, g.end]) {
+                    visuals.push(svgEl("line", {
+                        x1: v.x, y1: v.y, x2: target.x, y2: target.y,
+                        stroke: color, "stroke-width": stroke, "stroke-linecap": "round",
+                        "pointer-events": "none", class: "annot-shape",
+                    }));
+                }
+                const a1 = Math.atan2(g.start.y - v.y, g.start.x - v.x);
+                const a2 = Math.atan2(g.end.y - v.y, g.end.x - v.x);
+                const radius = Math.min(fontSize * 3.4, Math.hypot(g.start.x - v.x, g.start.y - v.y) * 0.8,
+                    Math.hypot(g.end.x - v.x, g.end.y - v.y) * 0.8);
+                if (radius > 2) {
+                    let sweep = a2 - a1;
+                    while (sweep <= -Math.PI) sweep += Math.PI * 2;
+                    while (sweep > Math.PI) sweep -= Math.PI * 2;
+                    visuals.push(svgEl("path", {
+                        d: `M ${v.x + Math.cos(a1) * radius} ${v.y + Math.sin(a1) * radius} A ${radius} ${radius} 0 0 ${
+                            sweep > 0 ? 1 : 0} ${v.x + Math.cos(a2) * radius} ${v.y + Math.sin(a2) * radius}`,
+                        fill: "none", stroke: color, "stroke-width": stroke,
+                        "pointer-events": "none", class: "annot-shape",
+                    }));
+                    drawChip(text, measureLabelPoint(g, fontSize), false);
+                } else {
+                    drawChip(text, {x: v.x, y: v.y - fontSize}, false);
+                }
+                break;
+            }
+
+            const len = Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y);
+            const dx = len > 0.001 ? (g.end.x - g.start.x) / len : 1;
+            const dy = len > 0.001 ? (g.end.y - g.start.y) / len : 0;
+            const nx = -dy;
+            const ny = dx;
+            const mid = {x: (g.start.x + g.end.x) / 2, y: (g.start.y + g.end.y) / 2};
+            // 先按文字宽度把主线从中点断开，再画两段，最后盖底板与文字
+            const halfText = text.length * fontSize * 0.62 / 2 + fontSize * 0.45 + fontSize * 0.3;
+            const gapHalf = Math.min(halfText, len / 2 - stroke);
+            if (len > halfText * 2) {
+                for (const dir of [-1, 1]) {
+                    const from = dir < 0 ? {x: mid.x - dx * gapHalf, y: mid.y - dy * gapHalf}
+                        : {x: mid.x + dx * gapHalf, y: mid.y + dy * gapHalf};
+                    const to = dir < 0 ? g.start : g.end;
+                    visuals.push(svgEl("line", {
+                        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+                        stroke: color, "stroke-width": stroke, "stroke-linecap": "round",
+                        "pointer-events": "none", class: "annot-shape",
+                    }));
+                }
+            } else {
+                visuals.push(svgEl("line", {
+                    x1: g.start.x, y1: g.start.y, x2: g.end.x, y2: g.end.y,
+                    stroke: color, "stroke-width": stroke, "stroke-linecap": "round",
+                    "pointer-events": "none", class: "annot-shape",
+                }));
+            }
+
+            // 尺寸界线：上下两段长度各自可调（拖动任一端，两侧同步）
+            if (object.style.measureTicks !== false) {
+                const up = Math.max(0, object.style.measureTickUp ?? fontSize * TICK_LEN_RATIO);
+                const down = Math.max(0, object.style.measureTickDown ?? fontSize * TICK_LEN_RATIO);
+                for (const p0 of [g.start, g.end]) {
+                    if (up > 0) {
+                        visuals.push(svgEl("line", {
+                            x1: p0.x, y1: p0.y, x2: p0.x - nx * up, y2: p0.y - ny * up,
+                            stroke: color, "stroke-width": stroke, "stroke-linecap": "round",
+                            "pointer-events": "none", class: "annot-shape",
+                        }));
+                    }
+                    if (down > 0) {
+                        visuals.push(svgEl("line", {
+                            x1: p0.x, y1: p0.y, x2: p0.x + nx * down, y2: p0.y + ny * down,
+                            stroke: color, "stroke-width": stroke, "stroke-linecap": "round",
+                            "pointer-events": "none", class: "annot-shape",
+                        }));
+                    }
+                }
+            }
+            // 端点箭头：几何与比例完全交给 arrowGeometry，和箭头工具同一套常量，
+            // 所以换个线宽，箭头大小也跟着变，两边永远一致
+            const head = object.style.arrowHead ?? "none";
+            if (head !== "none") {
+                const kind = {type: "single", head} as unknown as ArrowStyleKey;
+                const drawHead = (from: Point, to: Point): void => {
+                    const shape = arrowShape({start: from, end: to, control: null} as ArrowGeometry,
+                        kind, stroke);
+                    for (const h of shape.heads) {
+                        visuals.push(svgEl("path", {
+                            d: h.d, fill: h.fill ? color : "none", stroke: color,
+                            "stroke-width": stroke, "stroke-miterlimit": 10,
+                            "stroke-linecap": "round", "stroke-linejoin": "round",
+                            "pointer-events": "none", class: "annot-head",
+                        }));
+                    }
+                };
+                drawHead(g.start, g.end);
+                drawHead(g.end, g.start);
+            }
+
+            drawChip(text, mid);
             break;
         }
         case "number": {
@@ -653,10 +905,13 @@ export function renderObject(object: AnnotObject, options: RenderOptions): SVGGE
             // 手动指定过文字色（定位气泡的三色取色器）就以它为准，其余走上面按样式算出来的 ink
             if (object.style.numberTextColor) ink = object.style.numberTextColor;
             const badgeText = formatNumber(n.number, n.format ?? "arabic");
+            // 字号直接取全局设置（和文本 / 尺寸标注同一口径），只有多位数才略收一点；
+            // 以前用「半径 × 1.05」，半径本身只有字号的 0.65，等于凭空小了一号
+            const badgeFont = Math.max(8, object.style.fontSize ?? 24) * numberTextScale(badgeText);
             const label = svgEl("text", {
-                x: n.center.x, y: n.center.y + n.radius * 0.36,
+                x: n.center.x, y: n.center.y + badgeFont * 0.36,
                 fill: ink,
-                "font-size": n.radius * 1.05 * numberTextScale(badgeText),
+                "font-size": badgeFont,
                 "font-weight": "700", "text-anchor": "middle",
                 "font-family": fontStackOf(undefined),
                 "pointer-events": "none", class: "annot-shape",
@@ -907,6 +1162,9 @@ const HANDLE_ICONS: Record<string, string> = {
     edit: "M982.016 301.568L696.832 20.992c-7.168-6.656-16.384-10.24-26.112-10.752-9.728 0-19.456 4.096-26.112 11.264L113.152 567.296c-5.12 5.12-8.704 11.776-9.728 18.944l-71.68 383.488c-2.048 12.288 1.536 25.088 10.752 33.28 7.168 6.656 16.384 10.24 25.6 10.24 2.56 0 5.632-0.512 8.192-1.024l337.92-75.264c7.168-1.536 13.312-5.12 18.432-10.24L983.04 353.792c13.824-14.848 13.824-37.888-1.024-52.224zM419.84 833.024l-141.824-140.8c-14.336-14.336-37.888-14.336-52.224 0-14.336 14.336-14.336 37.888 0 52.736l130.048 129.024-241.664 54.272 59.392-317.44 497.664-510.976 232.96 228.864L419.84 833.024z",
 };
 
+/** 尺寸界线的默认长度：字号 × 此比例（PC 与移动端共用，别分两套） */
+const TICK_LEN_RATIO = 0.9;
+
 function makeHandle(
     name: string, p: Point, zoom: number, marker = "circle", sizes: HandleSizes = DESKTOP_HANDLES,
 ): SVGGElement {
@@ -984,11 +1242,11 @@ export function renderHandles(
     const rotation = getRotation(object);
     const dash = `${6 / zoom} ${4 / zoom}`;
     const result: SVGElement[] = [];
-    // 四角 / 四边：视觉上收小一圈（画布放大后不再笨重），命中半径一点不减；
-    // 文字块只有一行高，再小一档，四个角才不会上下叠在一起。
+    // 四角 / 四边：统一到文本工具那一档（0.52），各工具端点圆点视觉一致。
+    // 命中半径一点不减，视觉小了手指照样点得到。
     const dotSizes: HandleSizes = {
         ...sizes,
-        radius: sizes.radius * (object.type === "text" ? 0.52 : 0.67),
+        radius: sizes.radius * 0.52,
     };
     // 移动 / 旋转 / 编辑：圆底里要放 1024 图标，所以比角点大一圈
     const buttonSizes: HandleSizes = {
@@ -1018,9 +1276,43 @@ export function renderHandles(
                 "stroke-dasharray": dash, opacity: 0.65, "pointer-events": "none",
             }));
         }
-        handlesGroup.append(makeHandle("start", a.start, zoom, "circle", sizes));
-        handlesGroup.append(makeHandle("end", a.end, zoom, "circle", sizes));
+        // 端点圆点与文本工具同档（dotSizes）；菱形曲线点保持原样
+        handlesGroup.append(makeHandle("start", a.start, zoom, "circle", dotSizes));
+        handlesGroup.append(makeHandle("end", a.end, zoom, "circle", dotSizes));
         handlesGroup.append(makeHandle("curve", control, zoom, "diamond", sizes));
+    } else if (object.type === "measure") {
+        const m = object.geometry as MeasureGeometry;
+        // 尺寸线两端的圆点同样用 dotSizes，和箭头、文本一致
+        handlesGroup.append(makeHandle("start", m.start, zoom, "circle", dotSizes));
+        handlesGroup.append(makeHandle("end", m.end, zoom, "circle", dotSizes));
+        if (m.mode === "angle" && m.vertex) {
+            handlesGroup.append(makeHandle("vertex", m.vertex, zoom, "diamond", sizes));
+        }
+        // 数值文字正下方的「编辑」小图标（和文本工具那颗同形状）
+        {
+            const f = Math.max(10, object.style.fontSize ?? 14);
+            const at = measureLabelPoint(m, f);
+            handlesGroup.append(makeHandle("edit-measure", {x: at.x, y: at.y + f * 1.6},
+                zoom, "edit", buttonSizes));
+        }
+        // 尺寸界线的两个端点：拖任意一侧，另一侧跟着变（两侧共用同一长度）
+        if (m.mode === "length" && object.style.measureTicks !== false) {
+            const len = Math.hypot(m.end.x - m.start.x, m.end.y - m.start.y) || 1;
+            const nx = -(m.end.y - m.start.y) / len;
+            const ny = (m.end.x - m.start.x) / len;
+            const up = Math.max(0, object.style.measureTickUp ?? (object.style.fontSize ?? 14) * TICK_LEN_RATIO);
+            const down = Math.max(0, object.style.measureTickDown ?? (object.style.fontSize ?? 14) * TICK_LEN_RATIO);
+            // 界线端点：圆点直接贴在界线端点上（不再向外悬空 26px），
+            // 大小跟文本工具那一档一致；热区仍收在 8，避免和尺寸线端点抢点击
+            const tickSizes: HandleSizes = {radius: sizes.radius * 0.52, hitRadius: 8};
+            const gap = 0;
+            for (const p0 of [m.start, m.end]) {
+                handlesGroup.append(makeHandle("tickUp", {x: p0.x - nx * (up + gap), y: p0.y - ny * (up + gap)},
+                    zoom, "circle", tickSizes));
+                handlesGroup.append(makeHandle("tickDown", {x: p0.x + nx * (down + gap), y: p0.y + ny * (down + gap)},
+                    zoom, "circle", tickSizes));
+            }
+        }
     } else if (object.type === "line") {
         const l = object.geometry as LineGeometry;
         l.points.forEach((p, i) => {
@@ -1078,6 +1370,13 @@ export function renderHandles(
             moveAt = {x: center.x, y: center.y + 26 / zoom};
         }
     }
+    if (object.type === "measure") {
+        // 移动按钮放到数值文字正上方，压住数字就点不到编辑了
+        const mg = object.geometry as MeasureGeometry;
+        const mFont = Math.max(10, object.style.fontSize ?? 14);
+        const labelAt = measureLabelPoint(mg, mFont);
+        moveAt = {x: labelAt.x, y: labelAt.y - mFont * 2.1};
+    }
     handlesGroup.append(makeHandle("move", moveAt, zoom, "move", buttonSizes));
     if (object.type === "text") {
         // 文字：右上角一颗「再次编辑」，触屏上不用反复点文字去唤醒键盘
@@ -1120,6 +1419,14 @@ export function defaultStyle(type: AnnotType, current: CurrentStyle) {
         fillMode: (shape && fill > 0 ? "translucent" : "none") as "none" | "solid" | "translucent",
         lineDash: current.lineDash,
         lineDashGap: current.lineDashGap,
+        // 尺寸标注：新对象要继承「当前选的那套」，否则画出来又退回 px / 度
+        measureMode: type === "measure" ? current.measureMode : undefined,
+        measureUnit: type === "measure" ? current.measureUnit : undefined,
+        measureAngleUnit: type === "measure" ? current.measureAngleUnit : undefined,
+        measureTicks: type === "measure" ? current.measureTicks : undefined,
+        measureTickUp: type === "measure" ? current.measureTickUp : undefined,
+        measureTickDown: type === "measure" ? current.measureTickDown : undefined,
+        measureHeadMode: type === "measure" ? current.measureHeadMode : undefined,
         arrowStyle: current.arrowStyle,
         // 类型 + 端点：渲染只看这两个，arrowStyle 只是给旧版插件留的备份
         arrowType: current.arrowType,
@@ -1142,6 +1449,9 @@ export function defaultStyle(type: AnnotType, current: CurrentStyle) {
     if (type === "text") {
         Object.assign(style, {
             textStrokeEnabled: current.textStrokeEnabled,
+            textMode: current.textMode,
+            textBgColor: current.textBgColor,
+            textBgOpacity: current.textBgOpacity,
             textStrokeColor: current.textStrokeColor,
             textStrokeWidth: current.textStrokeWidth,
         });
@@ -1152,7 +1462,7 @@ export function defaultStyle(type: AnnotType, current: CurrentStyle) {
 export function objectLabel(object: AnnotObject): string {
     if (object.type === "text") {
         const text = (object.geometry as TextGeometry).text;
-        return text ? `文字：${text.slice(0, 8)}` : "文字";
+        return text ? `文本：${text.slice(0, 8)}` : "文本";
     }
     if (object.type === "number") {
         const n = object.geometry as NumberGeometry;

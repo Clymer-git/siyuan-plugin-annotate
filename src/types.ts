@@ -59,7 +59,8 @@ export type ToolType =
     | "highlight"
     | "line"
     | "spotlight"
-    | "magnifier";
+    | "magnifier"
+    | "measure";
 
 /**
  * 画布上真实存在的对象类型。
@@ -95,6 +96,16 @@ export interface ArrowGeometry {
     start: Point;
     end: Point;
     control: Point | null;
+}
+
+/** 尺寸标注：长度（两点）/ 角度（三点：起点、顶点、终点） */
+export interface MeasureGeometry {
+    mode: "length" | "angle";
+    start: Point;
+    end: Point;
+    /** 角度模式下的拐点 */
+    vertex?: Point;
+    rotation?: number;
 }
 
 export interface TextGeometry {
@@ -184,6 +195,7 @@ export type Geometry =
     | EllipseGeometry
     | ArrowGeometry
     | TextGeometry
+    | MeasureGeometry
     | NumberGeometry
     | MosaicGeometry
     | BlurGeometry
@@ -217,6 +229,27 @@ export interface AnnotStyle {
      * 文字描边（沿字形外沿的一圈描边，用来让文字在复杂底图上依然清楚）。
      * 只对 text 生效；缺省视为开启，老场景读进来时也会补上默认值。
      */
+    /** 文本的视觉模式：描边（提升复杂底图上的可读性）/ 背景（半透明色块托底） */
+    textMode?: "stroke" | "bg";
+    /** 文本背景色；只在 textMode="bg" 时生效 */
+    textBgColor?: string;
+    /** 文本背景不透明度 0~1；只在 textMode="bg" 时生效 */
+    textBgOpacity?: number;
+    /** 尺寸标注的单位：px / mm / cm / in（按 96 DPI 换算） */
+    measureUnit?: "px" | "mm" | "cm" | "m" | "km" | "um" | "pt" | "in" | "ft";
+    /** 角度标注的单位；与长度单位分开记，切来切去不会互相污染 */
+    measureAngleUnit?: "deg" | "rad";
+    /** 尺寸标注的类型：长度 / 角度 */
+    measureMode?: "length" | "angle";
+    /** 尺寸界线开关：开＝两端有垂直界线，关＝只有一条测量线 */
+    measureTicks?: boolean;
+    /** 尺寸界线向上 / 向下的长度（画布像素，两端共用，所以拖动任一端两侧同步） */
+    measureTickUp?: number;
+    measureTickDown?: number;
+    /** 用户手改过的数值文字；有值就优先显示，不再走自动换算 */
+    measureText?: string;
+    /** 尺寸线端点的箭头：无 / 单头 / 双头 */
+    measureHeadMode?: "none" | "single" | "double";
     /** 线条样式：实线 / 虚线 / 点线 / 点划线（顶部属性栏） */
     lineDash?: "solid" | "dashed" | "dotted" | "dashdot";
     /** 虚线的留空间距（画布像素，1~20）；缺省 6 */
@@ -375,7 +408,8 @@ export const TYPE_LABELS: Record<AnnotType, string> = {
     arrow: "箭头",
     rect: "矩形",
     ellipse: "椭圆",
-    text: "文字",
+    text: "文本",
+    measure: "尺寸",
     number: "序号",
     mosaic: "马赛克",
     blur: "模糊",
@@ -434,7 +468,21 @@ export interface PropertyPatch {
     arrowStyle?: ArrowStyleKey;
     arrowRounded?: boolean;
     lineRound?: boolean;
+    measureMode?: "length" | "angle";
+    measureUnit?: "px" | "mm" | "cm" | "m" | "km" | "um" | "pt" | "in" | "ft";
+    /** 角度标注的单位；与长度单位分开记，切来切去不会互相污染 */
+    measureAngleUnit?: "deg" | "rad";
+    measureTicks?: boolean;
+    measureTickUp?: number;
+    measureTickDown?: number;
+    measureHeadMode?: "none" | "single" | "double";
+    arrowHead?: ArrowHead;
     textStrokeEnabled?: boolean;
     textStrokeColor?: string;
     textStrokeWidth?: number;
+    /** 文本视觉模式：描边 / 背景 */
+    textMode?: "stroke" | "bg";
+    textBgColor?: string;
+    /** 0~1；滑块传上来的是 0~100，applyProperty 里会归一 */
+    textBgOpacity?: number;
 }

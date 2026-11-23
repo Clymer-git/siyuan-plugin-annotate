@@ -113,16 +113,23 @@ export class QuickEntry {
         button.setAttribute("title", this.label());
         button.innerHTML = ICON;
 
-        // 原来这组只有一个按钮，它带 --only（四个角都是圆角）。
-        // 现在变成两个：左边的我们负责左圆角，右边那个改成 --last 负责右圆角。
         const first = icons.firstElementChild as HTMLElement | null;
         const restored = !!first?.classList.contains("protyle-icon--only");
-        if (first && restored) {
-            first.classList.remove("protyle-icon--only");
-            first.classList.add("protyle-icon--last");
-        }
 
         icons.insertBefore(button, icons.firstElementChild);
+
+        // 圆角类必须整组重算：思源自己的 syncIcons 就是这么干的。
+        // Mac 上原生可能有 3 颗（OCR / 复制图片 / 更多），只改「原来那颗」会算错，
+        // 表现就是我们的按钮和原生组各成一个圆角块、还留着一道缝。
+        const items = Array.from(icons.children).filter(
+            (el): el is HTMLElement => el instanceof HTMLElement && el.classList.contains("protyle-icon"));
+        items.forEach((el) => el.classList.remove("protyle-icon--first", "protyle-icon--last", "protyle-icon--only"));
+        if (items.length === 1) {
+            items[0].classList.add("protyle-icon--only");
+        } else if (items.length > 1) {
+            items[0].classList.add("protyle-icon--first");
+            items[items.length - 1].classList.add("protyle-icon--last");
+        }
         container.setAttribute(MARK_ATTR, "1");
         this.installed.add({icons, button, restored});
 

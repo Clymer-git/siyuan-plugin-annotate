@@ -18,6 +18,7 @@ import {readImageTarget, supportsFrontend, type ImageTarget} from "./platform";
 import {AnnotEditor, THEME_STORAGE_KEY} from "./editor/AnnotEditor";
 import {DocumentPreview} from "./editor/preview";
 import {QuickEntry, ICON_PATH, ICON_VIEWBOX} from "./quickEntry";
+import {attachStorage, flushStorage} from "./storage";
 
 const ROOT_SELECTOR = '[data-annot-plugin-root="siyuan-plugin-annotate"]';
 
@@ -29,7 +30,20 @@ export default class AnnotatePlugin extends Plugin {
     private preview: DocumentPreview | null = null;
     private quickEntry: QuickEntry | null = null;
 
-    onload(): void {
+    async onload(): Promise<void> {
+        // 先把上次存下的配置读回来（工作空间 data/storage/petal/…/data.json），
+        // 再让编辑器等模块开始工作 —— 否则它们读到的还是空缓存。
+        try {
+            const persisted = await this.loadData("data");
+            attachStorage(persisted, async (payload) => {
+                await this.saveData("data", payload);
+            });
+        } catch {
+            // 首次安装 / 数据损坏：按默认值走，不影响使用
+            attachStorage(null, async (payload) => {
+                await this.saveData("data", payload);
+            });
+        }
         // 桌面端与移动端都注册：移动端长按图片同样会走 open-menu-image。
         let frontend = "";
         try {
@@ -56,6 +70,7 @@ export default class AnnotatePlugin extends Plugin {
     }
 
     onunload(): void {
+        flushStorage();
         this.eventBus.off(EVENT_OPEN_MENU_IMAGE, this.handleOpenMenuImage);
         this.quickEntry?.stop();
         this.quickEntry = null;
