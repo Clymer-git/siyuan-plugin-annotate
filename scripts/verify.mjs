@@ -1781,6 +1781,9 @@ check("1.4.2-alpha.6：移动端顶栏按钮高度 46、序号缩略图 15（文
     (srcCss || "").includes("height: 46px;") &&
     /annot-badge-icon \{[\s\S]{0,80}?height: 15px;/.test(srcCss || ""));
 
+check("1.4.2：平移按钮换成手型实心原稿（1024 视图，currentColor）",
+    srcIcons.includes("M500.7 63.7") && !srcIcons.includes("M730.453333 235.52"));
+
 console.log(`\n静态回归 / smoke test：${results.length - failed}/${results.length} 通过\n`);
 console.log("=== SHA256 ===");
 console.log(hashLines.join("\n"));
