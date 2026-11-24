@@ -6,9 +6,10 @@
 
 ## 更新记录
 
-**1.4.1** · 2026-11-23
+**1.4.2** · 2026-11-24
 
-- 修复：撤销操作导致未保存图片的底图消失的问题。
+- 优化：重构顶部悬浮栏的视觉层级并补齐工具名称。
+- 修复：移动端序号样式按钮的文字显示不全的问题。
 
 📖 [查看完整更新日志 (CHANGELOG.md)](https://github.com/Clymer-git/siyuan-plugin-annotate/blob/main/CHANGELOG.md)
 

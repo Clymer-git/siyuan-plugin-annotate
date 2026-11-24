@@ -586,7 +586,7 @@ check("两端竖线加箭头时按 miter 溢出量内缩，尖头不会戳出竖
     /kind\.type === "bar" && kind\.head !== "none"/.test(js) &&
     js.includes("arrowTipMiterInset(kind.head, lineWidth)"));
 check("悬浮条是两个自定义下拉（类型 + 样式），不再是原生 select",
-    !js.includes('data-action="arrow-style-select"') && !js.includes("annot-context__select") &&
+    !js.includes('data-action="arrow-style-select"') &&
     js.includes('"arrow-type-toggle"') && js.includes('"arrow-picker-toggle"') &&
     js.includes('"arrow-type-pick"') && js.includes('"arrow-style-pick"') &&
     js.includes("arrow-type-picker") && js.includes("annot-arrow-picker__item-label"))
@@ -799,9 +799,9 @@ check("全屏按钮样式：贴住「保存」右侧，全屏时高亮",
     css.includes(".annot-root.is-fullscreen .annot-titlebar__fullscreen.is-active"));
 
 // ---- v0.17.0：分割线按需 / 序号下拉 / 全屏遮挡 ----
-check("悬浮条分割线只在右边真有参数时才拼上去（选择 / 平移时只剩两颗按钮）",
-    (js.match(/annot-context__sep/g) || []).length === 1 &&
-    /const rest = html && this\.selectedIds\.length < 2 \? `[^`]*annot-context__sep[^`]*` \+ html : "";/.test(js) &&
+check("悬浮条分三区：常驻工具 | 工具名称 | 参数，两处 1px 竖线（1.4.2-alpha.1）",
+    (js.match(/annot-context__sep/g) || []).length >= 2 &&
+    /const nameBlock = TOOL_NAME\[type\]/.test(js) &&
     /bar\.innerHTML = base \+ alignPanel \+ rest;/.test(js));
 check("平移工具不再显示提示文字，与「选择」一样只留两颗常驻按钮",
     /if \(this\.activeTool === "pan"\) \{[\s\S]{0,200}?html = "";/.test(js) &&
@@ -1082,6 +1082,7 @@ const srcShapes2 = await readFile(path.join(root, "src/editor/shapes.ts"), "utf8
 const srcMeasure = await readFile(path.join(root, "src/editor/measure.ts"), "utf8");
 const srcSmart = await readFile(path.join(root, "src/editor/smartSelect.ts"), "utf8");
 const srcPresetsFile = await readFile(path.join(root, "src/editor/presets.ts"), "utf8");
+const srcCss = await readFile(path.join(root, "public/index.css"), "utf8");
 const srcStorage = await readFile(path.join(root, "src/storage.ts"), "utf8");
 const srcFontsFile = await readFile(path.join(root, "src/editor/fonts.ts"), "utf8");
 const srcNumberIcon = await readFile(path.join(root, "src/editor/numberIcon.ts"), "utf8");
@@ -1762,8 +1763,28 @@ console.log(`\n=== 校验目标：${target} ===\n`);
 for (const r of results) {
     console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}${r.detail ? "  [" + r.detail + "]" : ""}`);
 }
+check("1.4.2-alpha.2：参数区不再重复工具名；描边宽度带 px；序号改叫编号",
+    !/annot-context__title">(高亮|尺寸|马赛克|聚光灯|放大镜|模糊|文本)</.test(srcEditor2) &&
+    srcEditor2.includes('"描边宽度", 0, 12, strokeWidth, "px"') &&
+    srcEditor2.includes('annot-context__title">编号</span>'));
+
+check("1.4.2-alpha.3：参数区为切换项加了「类型」/「倍率」前缀标签",
+    (srcEditor2.match(/annot-context__label">(类型|倍率)</g) || []).length >= 5 &&
+    srcEditor2.includes('annot-context__label">倍率'));
+
+check("1.4.2-alpha.5：单位下拉与自定义下拉同款外观；滑块数字紧贴滑杆",
+    srcEditor2.includes('class="annot-context__select"') &&
+    (srcCss || "").includes(".annot-context__select") &&
+    (srcCss || "").includes("margin-left: -3px"));
+
+check("1.4.2-alpha.6：移动端顶栏按钮高度 46、序号缩略图 15（文字不再被压半行）",
+    (srcCss || "").includes("height: 46px;") &&
+    /annot-badge-icon \{[\s\S]{0,80}?height: 15px;/.test(srcCss || ""));
+
 console.log(`\n静态回归 / smoke test：${results.length - failed}/${results.length} 通过\n`);
 console.log("=== SHA256 ===");
 console.log(hashLines.join("\n"));
 console.log("");
 process.exit(failed > 0 ? 1 : 0);
+
+

@@ -41,6 +41,14 @@ import {
     FULLSCREEN_ICON, RESTORE_ICON, ALIGN_ICON, ALIGN_ACTIONS,
 } from "./icons";
 import type {AlignOp} from "./icons";
+
+/** 悬浮栏「工具名称区」用的中文名；和左竖栏的按钮标题保持一致 */
+const TOOL_NAME: Record<string, string> = {
+    // 选择 / 平移本身就是「常驻工具区」的那两颗按钮，不再重复显示名字
+    arrow: "箭头", rect: "矩形", ellipse: "椭圆",
+    line: "画线", text: "文本", number: "序号", measure: "尺寸注释",
+    highlight: "高亮", mosaic: "马赛克", blur: "模糊", spotlight: "聚光灯", magnifier: "放大镜",
+};
 import {CORNER_RADIUS_OPTIONS, MOBILE_CORNER_STEPS, normalizeCornerRadius} from "./cornerRadius";
 import {
     MagnifierRenderer, MAGNIFIER_ZOOMS, DEFAULT_MAGNIFIER_ZOOM,
@@ -6685,7 +6693,7 @@ export class AnnotEditor {
         } else if (type === "highlight" || type === "highlightRect") {
             // 高亮的两种画法：点一下直接换，不用先选工具再进设置
             const mode = this.current.highlightMode === "rect" ? "rect" : "brush";
-            html = `<span class="annot-context__title">高亮</span>` +
+            html = `<span class="annot-context__label">类型</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="高亮模式">` +
                 HIGHLIGHT_MODES.map((item) => `
                     <button type="button" class="annot-context__chip${item.key === mode ? " is-active" : ""}"
@@ -6727,9 +6735,9 @@ export class AnnotEditor {
                 `</div>`;
             const slider = mode === "bg"
                 ? range("textBgOpacity", "背景透明度", 0, 100, Math.round((1 - bgOpacity) * 100), "%")
-                : range("textStrokeWidth", "描边宽度", 0, 12, strokeWidth);
+                : range("textStrokeWidth", "描边宽度", 0, 12, strokeWidth, "px");
             // 字体入口放最末，与原来的位置一致
-            html = `<span class="annot-context__title">文本</span>` +
+            html = `<span class="annot-context__label">类型</span>` +
                 modeChips + colorChips + slider +
                 this.fontTriggerHtml(pickedText ? pickedText.style.fontFamily : this.current.fontFamily, false);
         } else if (type === "measure") {
@@ -6761,22 +6769,22 @@ export class AnnotEditor {
                             aria-pressed="${head === item.key}">${ARROW_HEAD_ICONS[item.key]}</button>`).join("") +
                     `</div>`
                 : "";
-            html = `<span class="annot-context__title">尺寸</span>` +
+            html = `<span class="annot-context__label">类型</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="标注类型">` +
                 [["length", "长度"], ["angle", "角度"]].map(([key, label]) => `
                     <button type="button" class="annot-context__chip${mode === key ? " is-active" : ""}"
                         data-action="measure-mode" data-value="${key}"
                         aria-pressed="${mode === key}">${label}</button>`).join("") +
                 `</div>` + lengthOnly +
-                `<label class="annot-context__item"><span>单位</span>
-                    <select data-ctx="measureUnit" aria-label="标注单位">
+                `<label class="annot-context__item annot-context__item--select"><span>单位</span>
+                    <select class="annot-context__select" data-ctx="measureUnit" aria-label="标注单位">
                         ${unitOptions.map(([v, t]) =>
                             `<option value="${v}"${unit === v ? " selected" : ""}>${t}</option>`).join("")}
                     </select></label>`;
         } else if (type === "mosaic") {
             const size = selected ? (selected.geometry as MosaicGeometry).blockSize : this.contextDefaults.blockSize;
             // 透明度对马赛克意义不大（它本来就是盖住内容），PC 悬浮条只留块大小
-            html = `<span class="annot-context__title">马赛克</span>` +
+            html = 
                 range("blockSize", "块大小", 4, 48, size) + smartChip;
         } else if (type === "spotlight") {
             // 暗度 / 遮挡形状：选中谁改谁，没选中就改下一个聚光灯的默认值
@@ -6788,7 +6796,7 @@ export class AnnotEditor {
                 ? (spot.geometry as SpotlightGeometry).shape ?? "rect" : this.current.spotlightShape;
             const maskColor = spot
                 ? spot.style.spotlightColor ?? "black" : this.current.spotlightColor;
-            html = `<span class="annot-context__title">聚光灯</span>` +
+            html = `<span class="annot-context__label">类型</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="遮罩颜色">` +
                 SPOTLIGHT_COLORS.map((item) => `
                     <button type="button" class="annot-context__chip annot-context__chip--mask${item.key === maskColor ? " is-active" : ""}"
@@ -6810,7 +6818,7 @@ export class AnnotEditor {
                 ? (lens.geometry as MagnifierGeometry).zoom : this.current.magnifierZoom);
             const shape = lens
                 ? (lens.geometry as MagnifierGeometry).shape ?? "ellipse" : this.current.magnifierShape;
-            html = `<span class="annot-context__title">放大镜</span>` +
+            html = `<span class="annot-context__label">倍率</span>` +
                 `<div class="annot-context__chips" role="group" aria-label="放大倍数">` +
                 MAGNIFIER_ZOOMS.map((value) => `
                     <button type="button" class="annot-context__chip${Math.abs(value - zoom) < 0.01 ? " is-active" : ""}"
@@ -6827,7 +6835,7 @@ export class AnnotEditor {
         } else if (type === "blur") {
             const radius = selected ? Math.round((selected.geometry as BlurGeometry).radius ?? 12)
                 : this.contextDefaults.blurRadius;
-            html = `<span class="annot-context__title">模糊</span>` +
+            html = 
                 range("blurRadius", "模糊程度", 2, 40, radius) + smartChip;
         } else if (type === "number") {
             // 编号格式 / 引线端点 / 圆线：都按「选中谁改谁，没选中改默认值」取当前值
@@ -6898,7 +6906,7 @@ export class AnnotEditor {
                         <span class="annot-arrow-picker__icon" aria-hidden="true">${ARROW_HEAD_ICONS[item.key]}</span>
                     </button>`).join("") +
                 `</div></div>`;
-            html = `<span class="annot-context__title">序号</span>` +
+            html = `<span class="annot-context__title">编号</span>` +
                 // 编号格式：下拉框（按钮上写「名称 + 一个样子」）
                 `<div class="annot-arrow-picker annot-picker--text${this.numberFormatOpen ? " is-open" : ""}"
                     data-role="number-format-picker">` +
@@ -6995,24 +7003,27 @@ export class AnnotEditor {
             const pickedLine = this.getObject(this.selectedId);
             const round = pickedLine?.type === "line"
                 ? pickedLine.style.lineRound !== false : this.current.lineRound;
-            html = `<span class="annot-context__title">画线</span>` +
-                `<span class="annot-context__hint">${round ? "圆头收口" : "方头收口"}</span>` +
-                `<button type="button" class="annot-context__toggle${round ? " is-active" : ""}"
+            // 工具名由「名称区」统一显示；收口状态只留在按钮的悬停提示里
+            html = `<button type="button" class="annot-context__toggle${round ? " is-active" : ""}"
                     data-action="line-round" aria-pressed="${round}"
-                    title="线端是否圆润：开了是圆头，关掉是方头（机械制图那种平齐收口）">圆线</button>`;
+                    title="${round ? "圆头收口" : "方头收口"}：点了切换线端是否圆润">圆线</button>`;
         } else if (this.cropMode) {
-            html = `<span class="annot-context__title">裁剪</span>` +
-                `<span class="annot-context__hint">在图上拖出保留区域，回车确认</span>`;
+            html = `<span class="annot-context__hint">在图上拖出保留区域，回车确认</span>`;
         } else if (this.lastCanvasOp && /^(rotate|flip)/.test(this.lastCanvasOp)) {
-            html = `<span class="annot-context__title">图像调整</span>` +
-                `<span class="annot-context__hint">旋转角度 90°</span>` +
+            html = `<span class="annot-context__hint">旋转角度 90°</span>` +
                 `<button type="button" class="annot-context__arrow" data-canvas-op="rotate-ccw">向左 90°</button>` +
                 `<button type="button" class="annot-context__arrow" data-canvas-op="rotate-cw">向右 90°</button>`;
         }
         // 多选时这一段参数没有任何意义（只会改到最后点的那一个），整个让位给对齐面板，
         // 顺便避免悬浮条被撑得比窗口还宽。分割线也只在真有参数时才出现。
-        const rest = html && this.selectedIds.length < 2
-            ? `<span class="annot-context__sep" aria-hidden="true"></span>` + html
+        // 三区：常驻工具 | 工具名称 | 该工具的参数。两处都用 1px 竖线隔开，
+        // 名称是这一栏的一级标题，参数是它的子项。
+        const nameBlock = TOOL_NAME[type]
+            ? `<span class="annot-context__name">${TOOL_NAME[type]}</span>`
+            : "";
+        const rest = (nameBlock || html) && this.selectedIds.length < 2
+            ? `<span class="annot-context__sep" aria-hidden="true"></span>` + nameBlock +
+              (html ? `<span class="annot-context__sep" aria-hidden="true"></span>` + html : "")
             : "";
         bar.innerHTML = base + alignPanel + rest;
         // 基座常驻：即使没选中任何东西、也没在画，这两个按钮也一直在

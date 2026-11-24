@@ -3366,7 +3366,8 @@ html.annot-fs .b3-dialog__close {
   justify-content: center;
   gap: 1px;
   width: 48px;
-  height: 42px;
+  /* 图标 + 文字两行，42px 在部分机型上会把第二行压掉半截，给到 46 */
+  height: 46px;
   padding: 0;
   border: 0;
   border-radius: 12px;
@@ -3385,10 +3386,12 @@ html.annot-fs .b3-dialog__close {
   text-overflow: ellipsis;
 }
 
-/* 顶栏的样式按钮里放的是「真实缩略图」，高度单独给足，宽度跟着比例走 */
+/* 顶栏的样式按钮里放的是「真实缩略图」，宽度跟着比例走。
+   高度从 19 收到 15：序号那颗按钮下面还有「实心圆 / 定位气泡 / 纯数字」要显示，
+   图标占太多就把文字挤掉半行。 */
 .annot-mobile-topbar__btn > svg.annot-badge-icon {
   width: auto;
-  height: 19px;
+  height: 15px;
 }
 
 .annot-mobile-topbar__btn > svg {
@@ -4179,6 +4182,16 @@ html.annot-fs .b3-dialog__close {
   overflow: visible;
 }
 .annot-context-bar[hidden] { display: none !important; }
+/* 参数组的前缀说明（类型 / 倍率）：浅灰、常规字重，只做引导，不抢选项的注意力 */
+.annot-context__label {
+  flex: none;
+  margin-right: -2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--annot-text-weak);
+  white-space: nowrap;
+}
+
 .annot-context__title {
   flex: none;
   font-weight: 700;
@@ -4221,6 +4234,18 @@ html.annot-fs .b3-dialog__close {
   border-color: var(--annot-accent);
   background: var(--annot-accent);
   color: var(--annot-accent-text);
+}
+
+/* 悬浮栏一级标题：当前工具的名字。比参数标签更重、更大一号，
+   和右侧参数之间隔一条竖线，一眼能分出「这是什么工具」和「它有哪些设置」。 */
+.annot-context__name {
+  flex: none;
+  padding: 0 3px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--annot-text);
+  white-space: nowrap;
 }
 
 .annot-context__sep {
@@ -4430,11 +4455,39 @@ html.annot-fs .b3-dialog__close {
 .annot-context__item { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .annot-context__item input[type="range"] { width: 92px; }
 .annot-context__item b {
-  min-width: 30px;
-  text-align: right;
+  /* 数字紧贴滑块右端：去掉原来的 30px 最小宽和右对齐，那两道留白让它看起来和滑杆无关 */
+  margin-left: -3px;
+  min-width: 0;
+  text-align: left;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+/* 单位下拉：外观对齐「圆角 / 字体」那颗下拉按钮（28px 高、7px 圆角、1px 边框、面板底色）。
+   原生 select 的下拉面板由系统绘制，改不到，这里统一的是收起态的外观与箭头。 */
+.annot-context__item--select { gap: 6px; }
+.annot-context__select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 28px;
+  min-width: 78px;
+  padding: 0 24px 0 10px;
+  border: 1px solid var(--annot-border);
+  border-radius: 7px;
+  background-color: var(--annot-panel);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a9aa0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  color: var(--annot-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.annot-context__select:hover { border-color: var(--annot-accent); }
+.annot-context__select:focus-visible {
+  outline: 2px solid var(--annot-accent);
+  outline-offset: 1px;
+}
+
 .annot-context__arrow {
   flex: none;
   appearance: none;
