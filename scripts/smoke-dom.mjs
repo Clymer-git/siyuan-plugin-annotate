@@ -5300,9 +5300,8 @@ if (process.argv[3] === "--m8") {
     }
 
     // 4.9) 移动端手柄：同样带「移动」抓手（v0.26.1）
-    check("M8 选中图形时有「移动」抓手，不用先切回选择工具",
-        !!q('[data-role="handles"] [data-handle="move"]') ||
-        !!all('[data-handle="move"]').length,
+    check("1.4.3-alpha.3：不再有「移动」抓手，选中后直接拖本体即可移动",
+        all('[data-handle="move"]').length === 0,
         String(all('[data-handle="move"]').length));
 
     // 5) 双指捏合缩放

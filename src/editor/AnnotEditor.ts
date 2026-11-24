@@ -2683,8 +2683,22 @@ export class AnnotEditor {
         // 输入框宽度贴着已有文字（不铺满整张画布），但最多到画布右边
         const measureWidth = (value: string): number => {
             const block = textBlockSize(value, geometry.fontSize, wrapWidth);
-            // 宽度贴着字形本身（留 2px 给光标），这样底色块（bounds + 内边距）能完整包住输入框
-            return Math.min(wrapWidth, Math.max(geometry.fontSize * 2, block.width + 2));
+            // textBlockSize 用的是「非中文一律 0.6 字宽」的经验值，遇上偏宽的字体、
+            // 或者浏览器给 font-weight: 600 做的伪粗体加宽，就会算窄几像素 ——
+            // 这几像素正好够让 overflow:hidden 把第四个字裁掉。
+            // 这里按输入框真实的字体 / 字号 / 字重实测一次，取两者较大值。
+            let real = block.width;
+            try {
+                const ctx = document.createElement("canvas").getContext("2d");
+                if (ctx) {
+                    ctx.font = `600 ${geometry.fontSize}px ${fontStackOf(object.style.fontFamily)}`;
+                    real = Math.max(real, ctx.measureText(value).width);
+                }
+            } catch {
+                // 取不到 canvas 就按估算值走，别因为测量失败把输入框搞坏
+            }
+            // 再留一点余量（字号的 20%，28px 约 5.6px）：光标、描边、不同字体的细微差异
+            return Math.min(wrapWidth, Math.max(geometry.fontSize * 2, real + geometry.fontSize * 0.2));
         };
         editor.style.left = `${position.x}px`;
         // 行高的半行距会把字形往下压 0.075 个字高，补回来才和提交后的位置对齐
@@ -3162,10 +3176,10 @@ export class AnnotEditor {
         this.linePolylineCleanup();
         if (!draft || draft.type !== "line") return;
         const l = draft.geometry as LineGeometry;
-        while (l.points.length > 2 &&
-            distance(l.points[l.points.length - 1], l.points[l.points.length - 2]) < 2 / this.viewport.zoom) {
-            l.points.pop();
-        }
+        // 数组最后一个点永远是「跟着鼠标走的预览点」（落点时会补一个），
+        // 它不属于用户点过的节点 —— 无条件丢掉，不能靠「两点重合」来猜：
+        // 鼠标只要移开过，预览点离上一个真点就很远，那条多余线段就是这么被提交上去的。
+        if (l.points.length > 2) l.points.pop();
         if (this.isDraftValid(draft)) {
             const object = this.createObject("line", draft.geometry);
             this.scene.objects.push(object);
@@ -3841,8 +3855,9 @@ export class AnnotEditor {
             this.closeNumberPickers();
             return;
         }
-        // 折线画到一半：Esc 是「收尾」，保留已连好的线段，不切工具也不关窗口
-        if (key === "escape" && this.linePolyline) {
+        // 折线画到一半：Esc / Enter 都是「收尾」，保留已连好的线段（丢掉那段跟随鼠标的预览线），
+        // 不切工具也不关窗口
+        if ((key === "escape" || key === "enter") && this.linePolyline) {
             e.preventDefault();
             e.stopPropagation();
             this.finishLine();

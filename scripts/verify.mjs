@@ -1326,15 +1326,14 @@ check("v0.25.1：空画布也能滑出抽屉（列表给空态），点画布与
     /if \(this\.mobileSheetOpen\) this\.closeMobileSheet\(\);/.test(srcEditor2) &&
     /this\.mobileSheetOpen = false;\s*\n\s*this\.syncMobileSheets\(\);/.test(srcEditor2));
 
-check("v0.26.7：移动/旋转/编辑换成 1024 图标 + 白圆底（currentColor 跟随主题）",
+check("v0.26.7 / 1.4.3-alpha.3：旋转与编辑仍用 1024 图标 + 白圆底（移动按钮已移除）",
     srcShapes2.includes("const HANDLE_ICONS") &&
     (srcShapes2.match(/M512 992a480 480/g) || []).length >= 1 &&
     srcShapes2.includes("translate(-512 -512)") &&
     srcShapes2.includes('style: "color: var(--annot-accent)"') &&
     srcShapes2.includes('fill: "currentColor"') &&
     srcShapes2.includes('makeHandle("rotate", top, zoom, "rotate", buttonSizes)') &&
-    srcShapes2.includes('makeHandle("move", moveAt, zoom, "move", buttonSizes)') &&
-    srcShapes2.includes('}, zoom, "edit", buttonSizes)'));
+    srcShapes2.includes('makeHandle("edit", moveAt, zoom, "edit", buttonSizes)'));
 
 check("v0.26.7 / 1.4.0-alpha.70：四角/四边统一收小到 0.52，命中半径不减（热区单独更大）",
     /const dotSizes: HandleSizes = \{[\s\S]{0,160}?radius: sizes\.radius \* 0\.52/.test(srcShapes2) &&
@@ -1783,6 +1782,18 @@ check("1.4.2-alpha.6：移动端顶栏按钮高度 46、序号缩略图 15（文
 
 check("1.4.2：平移按钮换成手型实心原稿（1024 视图，currentColor）",
     srcIcons.includes("M500.7 63.7") && !srcIcons.includes("M730.453333 235.52"));
+
+check("1.4.3-alpha.3：不再渲染移动按钮，文本的编辑按钮接手它的位置",
+    (srcShapes2 || "").includes('makeHandle("edit", moveAt') &&
+    !(srcShapes2 || "").includes('makeHandle("move"'));
+
+check("1.4.3-alpha.3：折线收尾无条件丢掉末尾预览点；Esc 与 Enter 都能收尾",
+    srcEditor2.includes("if (l.points.length > 2) l.points.pop();") &&
+    srcEditor2.includes('(key === "escape" || key === "enter") && this.linePolyline'));
+
+check("1.4.3-alpha.3：文本输入框宽度按真实字体实测，并留字号 20% 余量",
+    srcEditor2.includes('ctx.font = `600 ${geometry.fontSize}px') &&
+    srcEditor2.includes("real + geometry.fontSize * 0.2"));
 
 console.log(`\n静态回归 / smoke test：${results.length - failed}/${results.length} 通过\n`);
 console.log("=== SHA256 ===");

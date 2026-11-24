@@ -1377,13 +1377,10 @@ export function renderHandles(
         const labelAt = measureLabelPoint(mg, mFont);
         moveAt = {x: labelAt.x, y: labelAt.y - mFont * 2.1};
     }
-    handlesGroup.append(makeHandle("move", moveAt, zoom, "move", buttonSizes));
+    // 移动按钮不再渲染：选中后直接拖对象本体就能移动，中心那颗圆按钮反而挡住画面。
+    // 文本的「再次编辑」接手这个位置（原来在右上角），手指够得着，也不用反复点文字唤醒键盘。
     if (object.type === "text") {
-        // 文字：右上角一颗「再次编辑」，触屏上不用反复点文字去唤醒键盘
-        handlesGroup.append(makeHandle("edit", {
-            x: bounds.x + bounds.width + 26 / zoom,
-            y: bounds.y - 26 / zoom,
-        }, zoom, "edit", buttonSizes));
+        handlesGroup.append(makeHandle("edit", moveAt, zoom, "edit", buttonSizes));
     }
 
     result.push(handlesGroup);
