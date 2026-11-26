@@ -1083,6 +1083,7 @@ const srcMeasure = await readFile(path.join(root, "src/editor/measure.ts"), "utf
 const srcSmart = await readFile(path.join(root, "src/editor/smartSelect.ts"), "utf8");
 const srcPresetsFile = await readFile(path.join(root, "src/editor/presets.ts"), "utf8");
 const srcCss = await readFile(path.join(root, "public/index.css"), "utf8");
+const srcColorPresets = await readFile(path.join(root, "src/editor/colorPresets.ts"), "utf8");
 const srcStorage = await readFile(path.join(root, "src/storage.ts"), "utf8");
 const srcFontsFile = await readFile(path.join(root, "src/editor/fonts.ts"), "utf8");
 const srcNumberIcon = await readFile(path.join(root, "src/editor/numberIcon.ts"), "utf8");
@@ -1794,6 +1795,31 @@ check("1.4.3-alpha.3：折线收尾无条件丢掉末尾预览点；Esc 与 Ente
 check("1.4.3-alpha.3：文本输入框宽度按真实字体实测，并留字号 20% 余量",
     srcEditor2.includes('ctx.font = `600 ${geometry.fontSize}px') &&
     srcEditor2.includes("real + geometry.fontSize * 0.2"));
+
+check("1.4.4-alpha.6：颜色预设点击后高亮同步（custom 跟随）、提示文案改掉「拖动排序」",
+    srcEditor2.includes("const hex = this.activeColorState().saved[index];") &&
+    srcEditor2.includes("this.applyPreset(\"color\", hex);") &&
+    !srcEditor2.includes("host.insertBefore(moving") &&
+    srcEditor2.includes("setActiveColorState(setCustomColor(this.activeColorState(), hex));") &&
+    srcEditor2.includes("点一下切换颜色"));
+
+check("1.4.4-alpha.6：打字时点顶栏不抢焦点；切颜色当场反映到输入框",
+    srcEditor2.includes('this.root?.addEventListener("mousedown"') &&
+    srcEditor2.includes('.annot-toolbar, .annot-context-bar, .annot-mobile-topbar, .annot-mobile-style, ') &&
+    /private render\(\): void \{[\s\S]{0,200}?this\.syncTextEditorLook\(\);/.test(srcEditor2));
+
+check("1.4.4-alpha.6：文本描边 / 背景等专属取色也有保存预设与点击切换",
+    srcEditor2.includes('const withSaved = target.kind !== "extend-bg";') &&
+    srcEditor2.includes('if (this.colorPopTarget?.kind === "prop")') &&
+    srcEditor2.includes("this.applyWheelColor(hex, true);"));
+
+check("1.4.4-alpha.6：描边取色记进自己那套 custom，保存预设不再退回顶栏色",
+    srcEditor2.includes('private textColorState: ColorPresetState = loadColorPresets("text");') &&
+    srcEditor2.includes("private usesTextColorPresets(): boolean") &&
+    srcColorPresets.includes('const TEXT_STORAGE_KEY = "siyuan-plugin-annotate:text-colors";') &&
+    srcColorPresets.includes('scope: "main" | "text"') &&
+    srcEditor2.includes("const next = setCustomColor(this.activeColorState(), hex);") &&
+    srcEditor2.includes("this.usesTextColorPresets() ? null : normalizeColorHex(this.current.color)"));
 
 console.log(`\n静态回归 / smoke test：${results.length - failed}/${results.length} 通过\n`);
 console.log("=== SHA256 ===");

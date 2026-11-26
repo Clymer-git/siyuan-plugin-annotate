@@ -627,6 +627,8 @@ export class AnnotEditor {
     private slotWheel: ColorWheel | null = null;
     /** 自定义颜色 + 颜色预设（本地存储） */
     private colorState: ColorPresetState = loadColorPresets();
+    /** 文本描边 / 背景专用的另一套预设，和顶栏那套完全分开，互不同步 */
+    private textColorState: ColorPresetState = loadColorPresets("text");
     /** 颜色预设正在被拖动的下标；null = 没在拖 */
     private colorDragIndex: number | null = null;
     /** 拖动开始时记录指针位置，超过阈值才算「拖」，否则仍是点击应用颜色 */
@@ -1530,8 +1532,20 @@ export class AnnotEditor {
             }
         }, {signal});
 
-        // 颜色预设的拖动排序：按下记下标，移动超过阈值才算拖，
-        // 拖动过程中直接挪 DOM 做实时预览，松手才写回数据（数据与画面不会半步不一致）
+        // 正在打字时点顶栏、悬浮栏、各种小弹窗：只是调参数，不该把焦点从输入框抢走。
+        // 用 mousedown 而不是 click —— 前者能拦住聚焦，后者仍会正常触发，按钮点得动。
+        this.root?.addEventListener("mousedown", (event) => {
+            if (!this.textEditor) return;
+            const target = event.target as Element | null;
+            const ui = target?.closest?.(
+                ".annot-toolbar, .annot-context-bar, .annot-mobile-topbar, .annot-mobile-style, " +
+                ".annot-attr-pop, .annot-color-pop, .annot-tool-menu, .annot-help, .annot-extend");
+            if (!ui) return;
+            event.preventDefault();
+        }, {signal});
+
+        // 颜色预设：点一下就换成这个颜色，不再支持拖动排序。
+        // 按下只记位置，用来区分「点」和「手滑拖了一下」——拖了也不改顺序。
         this.root?.addEventListener("pointerdown", (event) => {
             const target = event.target as Element | null;
             if (target?.closest?.('[data-action="color-preset-remove"]')) return;
@@ -1556,38 +1570,33 @@ export class AnnotEditor {
             const dy = event.clientY - this.colorDragStart.y;
             if (!this.colorDragMoved && Math.abs(dx) + Math.abs(dy) < 4) return;
             this.colorDragMoved = true;
-            const host = this.root?.querySelector<HTMLElement>('[data-role="color-presets"]');
-            if (!host) return;
-            const chips = Array.from(host.querySelectorAll<HTMLElement>('[data-role="color-preset"]'));
-            chips.forEach((chip, index) => chip.classList.toggle("is-dragging", index === this.colorDragIndex));
-            const target = this.colorPresetIndexAt(event.clientX, event.clientY);
-            if (target === null || target === this.colorDragIndex) return;
-            const moving = chips[this.colorDragIndex];
-            const anchor = chips[target];
-            if (!moving || !anchor || anchor.parentElement !== host) return;
-            host.insertBefore(moving, target > this.colorDragIndex ? anchor.nextSibling : anchor);
-            Array.from(host.querySelectorAll<HTMLElement>('[data-role="color-preset"]'))
-                .forEach((chip, index) => { chip.dataset.index = String(index); });
-            this.colorDragIndex = target;
         }, {signal});
 
         const endColorDrag = (): void => {
             if (this.colorDragIndex === null) return;
+            const index = this.colorDragIndex;
             const dragged = this.colorDragMoved;
-            const host = this.root?.querySelector<HTMLElement>('[data-role="color-presets"]');
-            const order = host
-                ? Array.from(host.querySelectorAll<HTMLElement>('[data-role="color-preset"]'))
-                    .map((chip) => chip.dataset.value || "")
-                : [];
             this.colorDragIndex = null;
             this.colorDragStart = null;
             this.colorDragMoved = false;
-            if (!dragged) return;
-            if (order.length === this.colorState.saved.length && order.every(Boolean)) {
-                this.colorState = {custom: this.colorState.custom, saved: order};
-                saveColorPresets(this.colorState);
+            // 手滑拖了一下：什么都不做。预设顺序保持原样，也不当点击处理
+            if (dragged) return;
+            // 点击 = 直接切到这个颜色。
+            const hex = this.activeColorState().saved[index];
+            if (!hex) return;
+            // 高亮按 custom 判定，跟着指过去，否则会一直赖在最后保存的那一颗
+            this.setActiveColorState(setCustomColor(this.activeColorState(), hex));
+            if (this.colorPopTarget?.kind === "prop") {
+                // 文本描边 / 文本背景 / 对象颜色：落到对应的那个属性上
+                this.applyWheelColor(hex, true);
+                this.colorWheel?.setColor(hex);
+            } else {
+                // 当前色：有选中对象就改它，没选中就改后续绘制的默认色
+                this.applyPreset("color", hex);
+                this.paintCustomBall(hex);
+                this.colorWheel?.setColor(hex);
             }
-            this.renderColorPresets();
+            this.syncColorPresetActive();
         };
         this.root?.addEventListener("pointerup", endColorDrag, {signal});
         this.root?.addEventListener("pointercancel", endColorDrag, {signal});
@@ -3991,6 +4000,9 @@ export class AnnotEditor {
 
     private render(): void {
         this.renderCanvas();
+        // 正在编辑文字时，颜色 / 描边 / 背景可能刚被改过，输入框要当场跟上，
+        // 不能等用户提交后才在画布上看到新颜色
+        this.syncTextEditorLook();
         this.sidebar?.render(this.scene.objects, this.selectedIds, this.hoveredId);
         this.renderContextBar();
         this.renderMobileStyle();
@@ -5945,7 +5957,9 @@ export class AnnotEditor {
             ? (target.prop === "textStrokeColor" ? "文本描边颜色"
                 : target.prop === "textBgColor" ? "文本背景颜色" : "对象颜色")
             : target.kind === "extend-bg" ? "画布底色" : "自定义颜色";
-        const withSaved = target.kind === "current";
+        // 「保存到预设 + 颜色预设」不只在改当前色时出现：
+        // 文本描边、文本背景、对象颜色这些专属取色同样需要，否则每次都得重新调
+        const withSaved = target.kind !== "extend-bg";
         return `
             <div class="annot-color-pop__head"><span>${title}</span>
                 <button type="button" class="annot-icon-btn" data-action="color-pop-close"
@@ -5973,11 +5987,23 @@ export class AnnotEditor {
             this.paintCustomBall(hex);
             this.syncColorPresetActive();
         } else if (target.kind === "prop") {
+            // 把这次取到的颜色记进「当前弹窗对应那套预设」的 custom。
+            // 不记的话，保存预设时 state.custom 是空的，会退回主色（顶栏那个颜色），
+            // 于是出现「存的是描边色、显示出来却是顶栏色」。
+            const next = setCustomColor(this.activeColorState(), hex);
+            if (this.usesTextColorPresets()) {
+                this.textColorState = next;
+                if (commit) saveColorPresets(next, "text");
+            } else {
+                this.colorState = next;
+                if (commit) saveColorPresets(next);
+            }
             if (target.prop === "fillColor" || target.prop === "numberTextColor") {
                 this.applyNumberColor(target.prop, hex, commit);
             } else {
                 this.applyProperty({[target.prop]: hex} as PropertyPatch, commit);
             }
+            this.syncColorPresetActive();
         } else {
             this.extendState.custom1 = hex;
             this.extendState.slot = "custom1";
@@ -6011,9 +6037,10 @@ export class AnnotEditor {
         const host = this.root?.querySelector<HTMLElement>('[data-role="color-presets"]');
         if (!host) return;
         const hex = this.colorState.custom ?? normalizeColorHex(this.current.color) ?? "#FFFFFF";
-        const full = this.colorState.saved.length >= MAX_SAVED_COLORS;
-        host.innerHTML = this.colorState.saved.length
-            ? this.colorState.saved.map((item, index) => `
+        const state = this.activeColorState();
+        const full = state.saved.length >= MAX_SAVED_COLORS;
+        host.innerHTML = state.saved.length
+            ? state.saved.map((item, index) => `
                 <div class="annot-color-preset${item === hex ? " is-active" : ""}" data-role="color-preset"
                     data-index="${index}" data-value="${item}" title="${item}">
                     <button type="button" class="annot-color-preset__swatch" data-action="color-preset-apply"
@@ -6029,13 +6056,15 @@ export class AnnotEditor {
         }
         const hint = this.root?.querySelector<HTMLElement>('[data-role="color-pop-hint"]');
         if (hint) {
-            hint.textContent = full ? `最多 ${MAX_SAVED_COLORS} 个` : "拖动可排序，点 ✕ 删除";
+            hint.textContent = full ? `最多 ${MAX_SAVED_COLORS} 个` : "点一下切换颜色，点 ✕ 删除";
         }
     }
 
     /** 预设里当前颜色那一颗高亮 */
     private syncColorPresetActive(): void {
-        const hex = (this.colorState.custom ?? normalizeColorHex(this.current.color) ?? "").toUpperCase();
+        // 文本描边 / 背景有一套独立预设，高亮也要看那一套的 custom
+        const state = this.activeColorState();
+        const hex = (state.custom ?? normalizeColorHex(this.current.color) ?? "").toUpperCase();
         for (const chip of Array.from(this.root?.querySelectorAll<HTMLElement>('[data-role="color-preset"]') ?? [])) {
             chip.classList.toggle("is-active", (chip.dataset.value || "").toUpperCase() === hex);
         }
@@ -6067,22 +6096,43 @@ export class AnnotEditor {
         pop.style.visibility = "";
     }
 
+    /** 文本描边与背景走独立那套预设，其余（顶栏球、对象颜色）走主套 */
+    private usesTextColorPresets(): boolean {
+        const t = this.colorPopTarget;
+        return t?.kind === "prop" && (t.prop === "textStrokeColor" || t.prop === "textBgColor");
+    }
+
+    private activeColorState(): ColorPresetState {
+        return this.usesTextColorPresets() ? this.textColorState : this.colorState;
+    }
+
+    private setActiveColorState(next: ColorPresetState): void {
+        if (this.usesTextColorPresets()) {
+            this.textColorState = next;
+            saveColorPresets(next, "text");
+        } else {
+            this.colorState = next;
+            saveColorPresets(next);
+        }
+    }
+
     /** 把当前自定义色存进预设 */
     private saveCurrentColorPreset(): void {
-        const hex = this.colorState.custom ?? normalizeColorHex(this.current.color);
+        const state = this.activeColorState();
+        // 描边 / 背景那套没有「主色」可退，custom 为空就不存，绝不能拿顶栏颜色顶上
+        const hex = state.custom ?? (this.usesTextColorPresets() ? null : normalizeColorHex(this.current.color));
         if (!hex) return;
-        const before = this.colorState.saved.length;
-        this.colorState = addSavedColor(this.colorState, hex);
-        saveColorPresets(this.colorState);
+        const before = state.saved.length;
+        const next = addSavedColor(state, hex);
+        this.setActiveColorState(next);
         this.renderColorPresets();
-        this.setStatus(this.colorState.saved.length > before
+        this.setStatus(next.saved.length > before
             ? `已保存颜色 ${hex} 到预设`
             : `颜色 ${hex} 已经在预设里了`);
     }
 
     private removeColorPreset(value: string): void {
-        this.colorState = removeSavedColor(this.colorState, value);
-        saveColorPresets(this.colorState);
+        this.setActiveColorState(removeSavedColor(this.activeColorState(), value));
         this.renderColorPresets();
     }
 
@@ -7678,6 +7728,8 @@ export class AnnotEditor {
         const editor = this.textEditor;
         const object = this.getObject(this.editingTextId);
         if (!editor || !object || object.type !== "text") return;
+        // 打字过程中改颜色 / 描边 / 背景，输入框要立刻跟着变，
+        // 否则要等提交后画布重画才看到新颜色
         editor.style.color = object.style.color;
         const bgMode = object.style.textMode === "bg";
         const width = Math.max(0, object.style.textStrokeWidth ?? DEFAULT_TEXT_STROKE_WIDTH);

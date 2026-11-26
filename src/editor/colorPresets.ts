@@ -21,6 +21,8 @@ export interface ColorPresetState {
 export const MAX_SAVED_COLORS = 12;
 
 const STORAGE_KEY = "siyuan-plugin-annotate:colors";
+/** 文本描边 / 背景专用的一套预设，和顶栏那套各存各的，互不影响 */
+const TEXT_STORAGE_KEY = "siyuan-plugin-annotate:text-colors";
 
 export const EMPTY_COLOR_STATE: ColorPresetState = {custom: null, saved: []};
 
@@ -49,9 +51,10 @@ function sanitize(input: unknown): ColorPresetState {
     return {custom, saved};
 }
 
-export function loadColorPresets(): ColorPresetState {
+export function loadColorPresets(scope: "main" | "text" = "main"): ColorPresetState {
+    const key = scope === "text" ? TEXT_STORAGE_KEY : STORAGE_KEY;
     try {
-        const raw = readItem(STORAGE_KEY);
+        const raw = readItem(key);
         if (!raw) return {custom: null, saved: []};
         return sanitize(JSON.parse(raw));
     } catch {
@@ -59,9 +62,10 @@ export function loadColorPresets(): ColorPresetState {
     }
 }
 
-export function saveColorPresets(state: ColorPresetState): void {
+export function saveColorPresets(state: ColorPresetState, scope: "main" | "text" = "main"): void {
+    const key = scope === "text" ? TEXT_STORAGE_KEY : STORAGE_KEY;
     try {
-        writeItem(STORAGE_KEY, JSON.stringify(sanitize(state)));
+        writeItem(key, JSON.stringify(sanitize(state)));
     } catch {
         // 隐私模式下忽略，本次会话内仍然生效
     }

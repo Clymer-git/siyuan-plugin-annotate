@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.4.4 · 2026-11-26
+
+- 修复：[顶栏颜色预设无法点击切换的问题](https://github.com/Clymer-git/siyuan-plugin-annotate/issues/4)。
+- 修复：文本编辑时点击顶栏属性导致输入框失焦的问题。
+- 修复：文本编辑时切换颜色不立即生效的问题。
+- 新增：文本描边与背景的取色支持独立预设。
+
 ## 1.4.3 · 2026-11-24
 
 - 优化：[移除标注对象的移动按钮](https://github.com/Clymer-git/siyuan-plugin-annotate/issues/3)。
